@@ -36,6 +36,12 @@ export interface FakeYouTube {
   startRequests: { headers: http.IncomingHttpHeaders; body: any }[];
   /** Respond to the next session-start request with this error. */
   failNextStart?: { status: number; body?: unknown; headers?: Record<string, string> };
+  /** Fail the nth (1-based) session-start request once. */
+  failStartNth?: { n: number; status: number; body?: unknown; headers?: Record<string, string> };
+  /** Fail every session-start request. */
+  failStartAlways?: { status: number; body?: unknown; headers?: Record<string, string> };
+  /** Highest number of data (chunk) requests in flight at the same time. */
+  maxActiveData: number;
   /** Called for every data request; may inject faults. */
   hook?: (ctx: ChunkCtx) => ChunkAction;
   /** videos.list status the monitor sees, by video id. */
@@ -46,6 +52,7 @@ export interface FakeYouTube {
 
 export async function startFakeYouTube(): Promise<FakeYouTube> {
   let nth = 0;
+  let activeData = 0;
   const fake: FakeYouTube = {
     baseUrl: '',
     sessionsStarted: 0,
@@ -54,6 +61,7 @@ export async function startFakeYouTube(): Promise<FakeYouTube> {
     startRequests: [],
     statusOf: () => ({ uploadStatus: 'processed', privacyStatus: 'public', processingStatus: 'succeeded' }),
     statusRequests: [],
+    maxActiveData: 0,
     close: async () => undefined,
   };
 
@@ -74,6 +82,16 @@ export async function startFakeYouTube(): Promise<FakeYouTube> {
         if (!req.headers.authorization?.startsWith('Bearer ')) return json(res, 401, { error: { code: 401, message: 'Login Required' } });
         const body = raw ? JSON.parse(raw) : {};
         fake.startRequests.push({ headers: req.headers, body });
+        const startNo = fake.startRequests.length;
+        if (fake.failStartAlways) {
+          const f = fake.failStartAlways;
+          return json(res, f.status, f.body ?? {}, f.headers);
+        }
+        if (fake.failStartNth && fake.failStartNth.n === startNo) {
+          const f = fake.failStartNth;
+          fake.failStartNth = undefined;
+          return json(res, f.status, f.body ?? {}, f.headers);
+        }
         if (fake.failNextStart) {
           const f = fake.failNextStart;
           fake.failNextStart = undefined;
@@ -117,6 +135,9 @@ export async function startFakeYouTube(): Promise<FakeYouTube> {
       const start = Number(rm[1]);
       const end = Number(rm[2]);
       const total = Number(rm[3]);
+      activeData++;
+      fake.maxActiveData = Math.max(fake.maxActiveData, activeData);
+      res.on('close', () => activeData--);
       const ctx: ChunkCtx = { sessionId: sid, start, end, total, isFinal: end + 1 === total, nth: ++nth };
       const action = fake.hook?.(ctx);
 

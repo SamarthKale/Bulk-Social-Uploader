@@ -12,6 +12,8 @@ export const SettingsSchema = z.object({
   stableMs: z.number().int().min(100).max(600_000).default(2000),
   geminiModel: z.string().min(1).default(DEFAULT_GEMINI_MODEL),
   googleClientId: z.string().default(''),
+  /** Persisted so a pause survives a restart. */
+  queuePaused: z.boolean().default(false),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 export const SettingsPatchSchema = SettingsSchema.partial().strict();

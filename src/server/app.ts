@@ -13,6 +13,7 @@ import { registerSettingsRoutes } from './routes/settings.js';
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerMetadataRoutes } from './routes/metadata.js';
 import { registerAccountRoutes, CLIENT_SECRET_NAME } from './routes/accounts.js';
+import { registerQueueRoutes } from './routes/queue.js';
 import { createAccountAuth, type AccountAuth } from './youtube/accounts.js';
 import { GOOGLE_ENDPOINTS, type GoogleEndpoints } from './youtube/oauth.js';
 
@@ -60,6 +61,7 @@ export function buildApp(init: AppInit): FastifyInstance {
   registerProfileRoutes(app);
   registerMetadataRoutes(app);
   registerAccountRoutes(app);
+  registerQueueRoutes(app);
   return app;
 }
 
