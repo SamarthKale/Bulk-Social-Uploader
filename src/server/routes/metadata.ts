@@ -27,10 +27,20 @@ export function registerMetadataRoutes(app: FastifyInstance): void {
   app.put('/api/videos/:id/metadata', async (req, reply) => {
     const id = idOf(req);
     const body = EditBody.safeParse(req.body);
-    const cur = db.prepare('SELECT * FROM video_metadata WHERE video_id = ? AND is_current = 1').get(id) as CurrentRow | undefined;
-    if (!body.success || !cur) return reply.code(400).send({ error: 'invalid metadata, or the video has no metadata yet' });
+    if (!body.success) return reply.code(400).send({ error: 'invalid metadata' });
+    const info = db
+      .prepare('SELECT v.content_hash, f.ai_profile_id, f.default_category_id, f.auto_publish FROM videos v JOIN folders f ON f.id = v.folder_id WHERE v.id = ?')
+      .get(id) as { content_hash: string | null; ai_profile_id: number | null; default_category_id: string; auto_publish: number } | undefined;
+    if (!info) return reply.code(404).send({ error: 'video not found' });
+    // Writing metadata by hand works even if the AI never ran (or is switched off).
+    const cur: CurrentRow =
+      (db.prepare('SELECT * FROM video_metadata WHERE video_id = ? AND is_current = 1').get(id) as CurrentRow | undefined) ?? {
+        id: 0, ai_profile_id: info.ai_profile_id, prompt_version: null, provider: null, model: null,
+        category_id: info.default_category_id, language: null, content_hash: info.content_hash,
+      };
     const v = validateMetadata({ ...body.data, confidence: 'high', needsReview: false });
     if (!v.ok) return reply.code(400).send({ error: 'invalid metadata', details: v.errors });
+    const hadMetadata = cur.id !== 0;
     db.transaction(() => {
       db.prepare('UPDATE video_metadata SET is_current = 0 WHERE video_id = ?').run(id);
       db.prepare(
@@ -38,6 +48,9 @@ export function registerMetadataRoutes(app: FastifyInstance): void {
          VALUES(?,?,?,?,?,?,?,?,?,?, 'high', 0, 1, ?)`,
       ).run(id, cur.ai_profile_id, cur.prompt_version, 'user-edit', cur.model, v.value.title, v.value.description, JSON.stringify(v.value.hashtags), cur.category_id, cur.language, cur.content_hash);
       db.prepare("UPDATE videos SET metadata_status='READY', updated_at=datetime('now') WHERE id = ?").run(id);
+      if (!hadMetadata) {
+        db.prepare("UPDATE videos SET approval_status = ? WHERE id = ?").run(info.auto_publish ? 'NOT_REQUIRED' : 'PENDING', id);
+      }
     })();
     logActivity(db, 'video', id, 'metadata_edited', 'User edited metadata');
     return db.prepare('SELECT * FROM video_metadata WHERE video_id = ? AND is_current = 1').get(id);

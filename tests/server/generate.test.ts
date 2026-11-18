@@ -289,6 +289,23 @@ describe('metadata routes', () => {
     expect(current(id)!.title).toBe('My own title');
   });
 
+  it('PUT on a video with no metadata yet creates READY manual metadata (works with AI off)', async () => {
+    const { id } = await oneVideo();
+    const app = buildApp({ db, token: 't' });
+    const r = await app.inject({ method: 'PUT', url: `/api/videos/${id}/metadata`, headers: H, payload: { title: 'Written by hand', description: 'Mine', hashtags: ['#Shorts'] } });
+    expect(r.statusCode).toBe(200);
+    expect(current(id)).toMatchObject({ title: 'Written by hand', provider: 'user-edit', is_current: 1 });
+    expect(video(id)).toMatchObject({ metadata_status: 'READY', approval_status: 'NOT_REQUIRED' });
+  });
+
+  it('manual metadata in a manual-review folder stays PENDING', async () => {
+    const { id, folderId } = await oneVideo();
+    updateFolder(db, folderId, { auto_publish: 0 });
+    const app = buildApp({ db, token: 't' });
+    await app.inject({ method: 'PUT', url: `/api/videos/${id}/metadata`, headers: H, payload: { title: 'T', description: 'D', hashtags: [] } });
+    expect(video(id).approval_status).toBe('PENDING');
+  });
+
   it('POST regenerate with only=title uses the provider and keeps the rest', async () => {
     const { id } = await oneVideo();
     const p = new FakeProvider();

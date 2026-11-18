@@ -8,7 +8,9 @@
     "build:ui": "vite build",
     "start": "npm run build:ui && tsx src/server/index.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:ui": "vite build && playwright test",
+    "test:all": "vitest run && npm run test:ui"
   },
   "dependencies": {
     "@fastify/static": "^8.0.0",

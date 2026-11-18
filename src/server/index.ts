@@ -12,7 +12,9 @@ async function main() {
   setLogDir(path.join(dir, 'logs'));
   const db = openDb(path.join(dir, 'localtube.db'));
   const token = crypto.randomBytes(24).toString('hex');
-  const app = buildApp({ db, token });
+  // Test hook for the browser smoke test only: a fixed folder instead of the native Windows dialog.
+  const testPick = process.env.LOCALTUBE_TEST_PICK_DIR;
+  const app = buildApp({ db, token, ...(testPick ? { pickFolder: async () => testPick } : {}) });
 
   const runtime = await startRuntime({
     db,
