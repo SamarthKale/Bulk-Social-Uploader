@@ -54,6 +54,9 @@ CREATE TABLE videos (
   approval_status TEXT NOT NULL DEFAULT 'PENDING',
   upload_status TEXT NOT NULL DEFAULT 'NOT_QUEUED',
   processing_status TEXT NOT NULL DEFAULT 'NOT_CHECKED',
+  youtube_privacy TEXT,
+  processing_detail TEXT,
+  processing_checked_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
