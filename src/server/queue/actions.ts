@@ -64,7 +64,30 @@ export function resolveUnknown(db: Db, jobId: number, input: ResolveInput): void
     setJob(db, jobId, 'UPLOAD_COMPLETE', { youtube_video_id: input.videoId, upload_completed_at: new Date().toISOString(), last_error_code: null, last_error_message: null, next_retry_at: null });
     logActivity(db, 'job', jobId, 'unknown_resolved', `User confirmed the video exists on YouTube (${input.videoId})`, { action: 'found', videoId: input.videoId });
   } else {
-    setJob(db, jobId, 'QUEUED', { resumable_session_reference: null, bytes_sent: 0, attempt_count: 0, last_error_code: null, last_error_message: null, next_retry_at: null });
+    setJob(db, jobId, 'QUEUED', { resumable_session_reference: null, bytes_sent: 0, data_started: 0, attempt_count: 0, last_error_code: null, last_error_message: null, next_retry_at: null });
     logActivity(db, 'job', jobId, 'unknown_resolved', 'User confirmed the video is NOT on YouTube; the upload was queued again', { action: 'not_uploaded' });
   }
+}
+
+const STOPPABLE_ON_REJECT: UploadStatus[] = ['QUEUED', 'UPLOADING', 'RETRY_WAIT', 'BLOCKED_BY_QUOTA', 'BLOCKED_BY_CHANNEL_LIMIT', 'UPLOAD_PAUSED'];
+
+/**
+ * Rejecting a video also cancels any job that has not finished, including one mid-upload (the worker
+ * notices at its next chunk). A job in UPLOAD_OUTCOME_UNKNOWN is left for the user to resolve.
+ */
+export function rejectVideos(db: Db, ids: number[]): number {
+  let n = 0;
+  db.transaction(() => {
+    const upd = db.prepare("UPDATE videos SET approval_status = 'REJECTED', updated_at = datetime('now') WHERE id = ?");
+    for (const id of ids) {
+      n += upd.run(id).changes;
+      const jobs = db.prepare('SELECT id FROM upload_jobs WHERE video_id = ?').all(id) as { id: number }[];
+      for (const j of jobs) {
+        if (setJob(db, j.id, 'CANCELLED', { next_retry_at: null, last_error_message: 'Video was rejected' }, STOPPABLE_ON_REJECT)) {
+          logActivity(db, 'job', j.id, 'cancelled', 'Cancelled because the video was rejected');
+        }
+      }
+    }
+  })();
+  return n;
 }

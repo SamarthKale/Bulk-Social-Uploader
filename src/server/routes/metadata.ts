@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { logActivity } from '../activity.js';
 import { generateMetadata } from '../ai/generate.js';
 import { validateMetadata } from '../ai/metadataSchema.js';
+import { rejectVideos } from '../queue/actions.js';
 
 const EditBody = z.object({ title: z.string(), description: z.string(), hashtags: z.array(z.string()) });
 const IdsBody = z.object({ ids: z.array(z.number().int()).min(1).max(5000) });
@@ -53,7 +54,12 @@ export function registerMetadataRoutes(app: FastifyInstance): void {
       }
     })();
     logActivity(db, 'video', id, 'metadata_edited', 'User edited metadata');
-    return db.prepare('SELECT * FROM video_metadata WHERE video_id = ? AND is_current = 1').get(id);
+    // A queued job picks this edit up when its upload session starts. Once a session exists, YouTube already has the old text.
+    const job = db.prepare('SELECT status, resumable_session_reference AS ref FROM upload_jobs WHERE video_id = ? ORDER BY id DESC LIMIT 1').get(id) as { status: string; ref: string | null } | undefined;
+    const warning = job && job.status !== 'CANCELLED' && (job.ref || job.status === 'UPLOAD_COMPLETE')
+      ? 'An upload has already started (or finished) for this video, so YouTube keeps the previous title and description. Change it in YouTube Studio.'
+      : undefined;
+    return { ...(db.prepare('SELECT * FROM video_metadata WHERE video_id = ? AND is_current = 1').get(id) as object), ...(warning ? { warning } : {}) };
   });
 
   // Regenerate one field (or everything) for a single video, waiting for the result.
@@ -91,9 +97,6 @@ export function registerMetadataRoutes(app: FastifyInstance): void {
   app.post('/api/videos/reject', async (req, reply) => {
     const b = IdsBody.safeParse(req.body);
     if (!b.success) return reply.code(400).send({ error: 'invalid body' });
-    const stmt = db.prepare("UPDATE videos SET approval_status='REJECTED', updated_at=datetime('now') WHERE id = ?");
-    let n = 0;
-    db.transaction(() => { for (const id of b.data.ids) n += stmt.run(id).changes; })();
-    return { updated: n };
+    return { updated: rejectVideos(db, b.data.ids) };
   });
 }

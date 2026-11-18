@@ -61,7 +61,14 @@ export function buildApp(init: AppInit): FastifyInstance {
     if (!/^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(req.headers.host ?? '')) {
       return reply.code(403).send({ error: 'forbidden host' });
     }
-    if (req.url.startsWith('/api/') && req.headers['x-localtube-token'] !== deps.token) {
+    // Match on the DECODED path: the router decodes percent-escapes, so "/%61pi/..." reaches /api routes.
+    let pathname = req.url.split('?')[0];
+    try {
+      pathname = decodeURIComponent(pathname);
+    } catch {
+      return reply.code(400).send({ error: 'bad request path' });
+    }
+    if (/^\/+api(\/|$)/i.test(pathname) && req.headers['x-localtube-token'] !== deps.token) {
       return reply.code(401).send({ error: 'unauthorized' });
     }
   });

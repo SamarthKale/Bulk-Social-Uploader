@@ -14,6 +14,8 @@ export interface JobRow {
   last_error_message: string | null;
   resumable_session_reference: string | null;
   bytes_sent: number;
+  /** 1 once a request carrying video bytes may have left this machine (persisted before the first PUT). */
+  data_started: number;
   file_fingerprint: string | null;
   youtube_video_id: string | null;
   upload_started_at: string | null;
@@ -24,13 +26,13 @@ export type JobPatch = Partial<
   Pick<
     JobRow,
     | 'attempt_count' | 'next_retry_at' | 'last_error_code' | 'last_error_message' | 'resumable_session_reference'
-    | 'bytes_sent' | 'youtube_video_id' | 'upload_started_at' | 'upload_completed_at' | 'file_fingerprint'
+    | 'bytes_sent' | 'data_started' | 'youtube_video_id' | 'upload_started_at' | 'upload_completed_at' | 'file_fingerprint'
   >
 >;
 
 const PATCH_KEYS: (keyof JobPatch)[] = [
   'attempt_count', 'next_retry_at', 'last_error_code', 'last_error_message', 'resumable_session_reference',
-  'bytes_sent', 'youtube_video_id', 'upload_started_at', 'upload_completed_at', 'file_fingerprint',
+  'bytes_sent', 'data_started', 'youtube_video_id', 'upload_started_at', 'upload_completed_at', 'file_fingerprint',
 ];
 
 export function getJob(db: Db, id: number): JobRow | undefined {

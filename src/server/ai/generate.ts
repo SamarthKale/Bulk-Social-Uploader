@@ -10,6 +10,7 @@ import { AiError, type AiProvider } from './provider.js';
 import { getProfile, type AiProfile } from './profileRepo.js';
 import { buildPrompt } from './prompt.js';
 import { validateMetadata, type Metadata } from './metadataSchema.js';
+import { reviewReasons } from './safety.js';
 
 export type OnlyField = 'title' | 'description' | 'hashtags';
 
@@ -161,6 +162,8 @@ export async function generateMetadata(deps: GenerateDeps, videoId: number, opts
       hashtags: opts.only && opts.only !== 'hashtags' && cur ? (JSON.parse(cur.hashtags_json) as string[]) : value.hashtags,
     };
 
+    const flags = reviewReasons(merged);
+    const needsReview = value.needsReview || flags.length > 0;
     db.transaction(() => {
       db.prepare('UPDATE video_metadata SET is_current = 0 WHERE video_id = ?').run(videoId);
       db.prepare(
@@ -169,13 +172,14 @@ export async function generateMetadata(deps: GenerateDeps, videoId: number, opts
       ).run(
         videoId, profile.id, profile.prompt_version, provider.name, provider.model, merged.title, merged.description,
         JSON.stringify(merged.hashtags), value!.categoryId ?? folder.default_category_id, value!.language ?? profile.language,
-        value!.confidence, value!.needsReview ? 1 : 0, hash,
+        value!.confidence, needsReview ? 1 : 0, hash,
       );
       db.prepare("UPDATE videos SET metadata_status='READY', approval_status=?, updated_at=datetime('now') WHERE id=?").run(
-        decideApproval(autoPublish, value!.confidence, value!.needsReview),
+        decideApproval(autoPublish, value!.confidence, needsReview),
         videoId,
       );
     })();
+    if (flags.length) logActivity(db, 'video', videoId, 'ai_flagged', `Held for review: the generated text ${flags.join(' and ')}`);
     return { status: 'ready' };
   } catch (e) {
     return fail(e instanceof Error ? e.message : String(e));

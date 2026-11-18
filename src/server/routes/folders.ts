@@ -18,30 +18,47 @@ const PatchBody = z
   .partial()
   .strict();
 
-function isDirectory(p: string): boolean {
+/**
+ * Whether a folder is reachable. Async with a timeout so an offline network share cannot block the
+ * event loop (and with it uploads and the UI).
+ */
+export async function checkAvailable(
+  p: string,
+  timeoutMs = 2000,
+  stat: (p: string) => Promise<fs.Stats> = (x) => fs.promises.stat(x),
+): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
   try {
-    return fs.statSync(p).isDirectory();
+    const s = await Promise.race([
+      stat(p),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('timed out')), timeoutMs);
+      }),
+    ]);
+    return s.isDirectory();
   } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 export function registerFolderRoutes(app: FastifyInstance): void {
   const { db } = app.deps;
 
-  app.get('/api/folders', async () => listFolders(db).map((f) => ({ ...f, available: isDirectory(f.path) })));
+  app.get('/api/folders', async () => Promise.all(listFolders(db).map(async (f) => ({ ...f, available: await checkAvailable(f.path) }))));
 
   app.post('/api/folders', async (req, reply) => {
     const body = AddBody.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: 'invalid body' });
-    if (!isDirectory(body.data.path)) return reply.code(400).send({ error: 'folder does not exist or is not a directory' });
+    if (!(await checkAvailable(body.data.path, 5000))) return reply.code(400).send({ error: 'folder does not exist or is not a directory' });
     return addFolder(db, body.data);
   });
 
   app.post('/api/folders/pick', async (_req, reply) => {
     const picked = await app.deps.pickFolder();
     if (!picked) return reply.code(204).send();
-    if (!isDirectory(picked)) return reply.code(400).send({ error: 'folder does not exist' });
+    if (!(await checkAvailable(picked, 5000))) return reply.code(400).send({ error: 'folder does not exist' });
     return addFolder(db, { path: picked });
   });
 

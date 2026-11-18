@@ -79,13 +79,16 @@ export function startUploadWorker(deps: UploadWorkerDeps, concurrency: number | 
     logActivity(db, 'job', jobId, 'upload_paused', message);
   }
 
-  function markUnknown(jobId: number, message: string): void {
-    setJ(jobId, 'UPLOAD_OUTCOME_UNKNOWN', {
-      last_error_code: 'outcome_unknown',
-      last_error_message: message,
-      next_retry_at: iso(now() + baseMs * 2),
-    });
-    logActivity(db, 'job', jobId, 'upload_unknown', message);
+  /** Only moves a job that is still UPLOADING, so a cancel or retry made meanwhile is never overwritten. */
+  function markUnknown(jobId: number, message: string): boolean {
+    const changed = setJ(
+      jobId,
+      'UPLOAD_OUTCOME_UNKNOWN',
+      { last_error_code: 'outcome_unknown', last_error_message: message, next_retry_at: iso(now() + baseMs * 2) },
+      ['UPLOADING'],
+    );
+    if (changed) logActivity(db, 'job', jobId, 'upload_unknown', message);
+    return changed;
   }
 
   /** Asks YouTube, through the saved session, what happened to an uncertain upload. Never starts a new upload. */
@@ -115,7 +118,7 @@ export function startUploadWorker(deps: UploadWorkerDeps, concurrency: number | 
     const status: UploadStatus = kind === 'quota' ? 'BLOCKED_BY_QUOTA' : 'BLOCKED_BY_CHANNEL_LIMIT';
     const reset = kind === 'quota' ? iso(nextQuotaResetMs(now())) : null;
     const patch = { next_retry_at: reset, last_error_code: kind, last_error_message: message };
-    setJ(jobId, status, patch);
+    setJ(jobId, status, patch, ['UPLOADING']);
     const others = db.prepare("SELECT id FROM upload_jobs WHERE status IN ('QUEUED','RETRY_WAIT') AND id != ?").all(jobId) as { id: number }[];
     for (const o of others) setJ(o.id, status, patch, ['QUEUED', 'RETRY_WAIT']);
     logActivity(db, 'job', jobId, kind === 'quota' ? 'blocked_quota' : 'blocked_channel_limit', `${message}. ${others.length} other job(s) paused.`);
@@ -145,11 +148,12 @@ export function startUploadWorker(deps: UploadWorkerDeps, concurrency: number | 
           db.prepare("INSERT INTO settings(key,value) VALUES('queuePaused','true') ON CONFLICT(key) DO UPDATE SET value='true'").run();
           return;
         case 'permanent':
-          setJ(jobId, 'FAILED_PERMANENTLY', { last_error_code: 'permanent', last_error_message: e.message });
-          logActivity(db, 'job', jobId, 'upload_failed', e.message);
+          if (setJ(jobId, 'FAILED_PERMANENTLY', { last_error_code: 'permanent', last_error_message: e.message }, ['UPLOADING'])) {
+            logActivity(db, 'job', jobId, 'upload_failed', e.message);
+          }
           return;
         case 'unknown':
-          markUnknown(jobId, `The connection ended before YouTube confirmed the upload: ${e.message}`);
+          if (!markUnknown(jobId, `The connection ended before YouTube confirmed the upload: ${e.message}`)) return;
           return reconcile(jobId);
         default:
           return transient(jobId, e.message, e.retryAfterMs);
@@ -165,13 +169,15 @@ export function startUploadWorker(deps: UploadWorkerDeps, concurrency: number | 
 
   function transient(jobId: number, message: string, retryAfterMs?: number): void {
     const j = getJob(db, jobId)!;
+    if (j.status !== 'UPLOADING') return; // cancelled, rejected or re-queued meanwhile: not ours to change
     if (j.attempt_count >= MAX_ATTEMPTS) {
-      setJ(jobId, 'FAILED_PERMANENTLY', { last_error_code: 'gave_up', last_error_message: `Gave up after ${j.attempt_count} attempts: ${message}` });
-      logActivity(db, 'job', jobId, 'upload_failed', `Gave up after ${j.attempt_count} attempts: ${message}`);
+      if (setJ(jobId, 'FAILED_PERMANENTLY', { last_error_code: 'gave_up', last_error_message: `Gave up after ${j.attempt_count} attempts: ${message}` }, ['UPLOADING'])) {
+        logActivity(db, 'job', jobId, 'upload_failed', `Gave up after ${j.attempt_count} attempts: ${message}`);
+      }
       return;
     }
     const delay = nextRetryDelayMs(j.attempt_count, rand, retryAfterMs, baseMs);
-    setJ(jobId, 'RETRY_WAIT', { next_retry_at: iso(now() + delay), last_error_code: 'transient', last_error_message: message });
+    setJ(jobId, 'RETRY_WAIT', { next_retry_at: iso(now() + delay), last_error_code: 'transient', last_error_message: message }, ['UPLOADING']);
   }
 
   // ---- one job --------------------------------------------------------------------------------
@@ -198,7 +204,11 @@ export function startUploadWorker(deps: UploadWorkerDeps, concurrency: number | 
     if (!account?.confirmed || !account.is_enabled) return pause(jobId, 'no_channel', 'No confirmed YouTube channel; confirm one in Accounts & Channels');
 
     const token = await deps.auth.getAccessToken(job.youtube_account_id!);
-    const md = db.prepare('SELECT title, description, hashtags_json, category_id FROM video_metadata WHERE id = ?').get(job.metadata_id) as MetaRow;
+    // A job without a session yet takes the video's CURRENT metadata, so edits made while it waited are used.
+    const currentMeta = db.prepare('SELECT id FROM video_metadata WHERE video_id = ? AND is_current = 1').get(job.video_id) as { id: number } | undefined;
+    const metaId = !job.resumable_session_reference && currentMeta ? currentMeta.id : job.metadata_id;
+    if (metaId !== job.metadata_id) db.prepare('UPDATE upload_jobs SET metadata_id = ? WHERE id = ?').run(metaId, jobId);
+    const md = db.prepare('SELECT title, description, hashtags_json, category_id FROM video_metadata WHERE id = ?').get(metaId) as MetaRow;
     const hashtags = JSON.parse(md.hashtags_json) as string[];
     const meta: SessionMeta = {
       title: md.title,
@@ -218,7 +228,8 @@ export function startUploadWorker(deps: UploadWorkerDeps, concurrency: number | 
         return;
       }
       if (q.state === 'gone') {
-        if (job.bytes_sent > 0) {
+        // bytes_sent only advances on a server reply, so it cannot prove nothing was sent: use the explicit flag.
+        if (job.data_started || job.bytes_sent > 0) {
           markUnknown(jobId, 'The saved upload session no longer exists, so LocalTube cannot tell whether YouTube received the video');
           return;
         }
@@ -229,8 +240,11 @@ export function startUploadWorker(deps: UploadWorkerDeps, concurrency: number | 
     }
     if (!uri) {
       uri = await startSession(token, meta, st.size, upOpts);
-      setJ(jobId, 'UPLOADING', { resumable_session_reference: uri, bytes_sent: 0 }); // persisted before any byte is sent
+      // Persisted before any byte is sent. If the job was cancelled or re-queued meanwhile, stop here.
+      if (!setJ(jobId, 'UPLOADING', { resumable_session_reference: uri, bytes_sent: 0, data_started: 0 }, ['UPLOADING'])) throw new UploadAbortedError();
     }
+    // Record that bytes may now leave this machine, before the first PUT (a single-chunk upload never updates bytes_sent mid-way).
+    if (!setJ(jobId, 'UPLOADING', { data_started: 1 }, ['UPLOADING'])) throw new UploadAbortedError();
 
     const result = await uploadFrom(
       uri,
@@ -269,7 +283,10 @@ export function startUploadWorker(deps: UploadWorkerDeps, concurrency: number | 
   }
 
   function claim(): number | null {
-    const row = db.prepare("SELECT id FROM upload_jobs WHERE status = 'QUEUED' ORDER BY id LIMIT 1").get() as { id: number } | undefined;
+    const busy = [...inFlight.keys()]; // a job still winding down from an earlier attempt must not be claimed again
+    const row = db
+      .prepare(`SELECT id FROM upload_jobs WHERE status = 'QUEUED' ${busy.length ? `AND id NOT IN (${busy.map(() => '?').join(',')})` : ''} ORDER BY id LIMIT 1`)
+      .get(...busy) as { id: number } | undefined;
     if (!row) return null;
     const ok = db.transaction(() => {
       const r = db

@@ -109,6 +109,7 @@ CREATE TABLE upload_jobs (
   last_error_message TEXT,
   resumable_session_reference TEXT,
   bytes_sent INTEGER NOT NULL DEFAULT 0,
+  data_started INTEGER NOT NULL DEFAULT 0,
   file_fingerprint TEXT,
   youtube_video_id TEXT,
   upload_started_at TEXT,

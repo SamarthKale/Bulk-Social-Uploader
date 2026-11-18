@@ -95,6 +95,7 @@ export async function scanFolder(db: Db, folderId: number, opts: ScanOptions = {
     return result;
   }
 
+  const foreignOwner = db.prepare('SELECT 1 FROM videos WHERE file_path = ?');
   const seen = new Set<string>();
   const work: { c: Candidate; row?: VideoRow }[] = [];
   for await (const file of walk(folder.path, !!folder.recursive_scan)) {
@@ -104,9 +105,11 @@ export async function scanFolder(db: Db, folderId: number, opts: ScanOptions = {
     } catch {
       continue;
     }
+    const row = existing.get(file);
+    // Overlapping folders (a parent and one of its subfolders): the first folder to record a file owns it.
+    if (!row && foreignOwner.get(file)) continue;
     seen.add(file);
     result.found++;
-    const row = existing.get(file);
     const c: Candidate = { file, size: st.size, mtimeMs: Math.trunc(st.mtimeMs) };
     const unchanged = row && row.file_size_bytes === c.size && row.modified_at === c.mtimeMs;
     if (unchanged && SETTLED.has(row.discovery_status)) continue;

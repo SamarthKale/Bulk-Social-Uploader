@@ -52,8 +52,15 @@ export async function enqueueEligible(db: Db, opts: { videoIds?: number[] } = {}
     if (!meta || (meta.content_hash && meta.content_hash !== hash)) continue; // stale metadata
 
     const created = db.transaction(() => {
-      const fresh = db.prepare("SELECT upload_status FROM videos WHERE id = ?").get(v.id) as { upload_status: string };
-      if (fresh.upload_status !== 'NOT_QUEUED') return false;
+      // Re-check inside the transaction: the user may have rejected or changed the video while it was being hashed.
+      const still = db
+        .prepare(
+          `SELECT 1 FROM videos v JOIN folders f ON f.id = v.folder_id
+           WHERE v.id = ? AND v.upload_status = 'NOT_QUEUED' AND v.discovery_status = 'VALID' AND v.metadata_status = 'READY'
+             AND (v.approval_status = 'APPROVED' OR (v.approval_status = 'NOT_REQUIRED' AND f.auto_publish = 1))`,
+        )
+        .get(v.id);
+      if (!still) return false;
       db.prepare(
         "INSERT INTO upload_jobs(video_id, youtube_account_id, metadata_id, visibility, status, file_fingerprint) VALUES(?,?,?,?, 'QUEUED', ?)",
       ).run(v.id, account.id, meta.id, v.default_visibility, `${v.file_size_bytes}:${v.modified_at}:${hash}`);

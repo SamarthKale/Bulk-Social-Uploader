@@ -24,7 +24,14 @@ export function MetadataEditor({ video, onClose, onChange }: { video: VideoRow; 
     setBusy(name); setError(null); setNote('');
     try { await fn(); if (ok) setNote(ok); onChange(); } catch (e) { setError(errorText(e)); } finally { setBusy(''); }
   };
-  const save = () => run('save', () => api.put(`/api/videos/${video.id}/metadata`, { title, description, hashtags: parseTags(tags) }), 'Saved');
+  const save = async () => {
+    setBusy('save'); setError(null); setNote('');
+    try {
+      const r = await api.put<{ warning?: string }>(`/api/videos/${video.id}/metadata`, { title, description, hashtags: parseTags(tags) });
+      setNote(r.warning ? `Saved. ${r.warning}` : 'Saved');
+      onChange();
+    } catch (e) { setError(errorText(e)); } finally { setBusy(''); }
+  };
   const regen = (only?: 'title' | 'description' | 'hashtags') => run(`regen-${only ?? 'all'}`, () => api.post(`/api/videos/${video.id}/regenerate`, only ? { only } : {}));
 
   const warnings: string[] = [];
