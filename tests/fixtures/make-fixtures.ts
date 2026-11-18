@@ -10,15 +10,23 @@ export interface FixtureOpts {
   /** Changes the bytes without changing the picture, so two fixtures can differ. */
   seed?: string;
   audio?: boolean;
+  /** Target video bitrate, e.g. '4M', to make larger files. */
+  bitrate?: string;
+  /** High-entropy picture so the file is large (several MB) even for a few seconds. */
+  noisy?: boolean;
 }
 
 /** Generates a tiny real MP4 with ffmpeg at `dest`. */
 export function makeFixtureMp4(dest: string, o: FixtureOpts = {}): string {
-  const { width = 270, height = 480, seconds = 1, seed = 'a', audio = true } = o;
+  const { width = 270, height = 480, seconds = 1, seed = 'a', audio = true, bitrate, noisy } = o;
   fs.mkdirSync(path.dirname(dest), { recursive: true });
-  const args = ['-y', '-v', 'error', '-f', 'lavfi', '-i', `testsrc=size=${width}x${height}:rate=30:duration=${seconds}`];
+  const src = noisy
+    ? `color=c=black:size=${width}x${height}:rate=30:duration=${seconds},noise=alls=100:allf=t+u`
+    : `testsrc=size=${width}x${height}:rate=30:duration=${seconds}`;
+  const args = ['-y', '-v', 'error', '-f', 'lavfi', '-i', src];
   if (audio) args.push('-f', 'lavfi', '-i', `sine=frequency=440:duration=${seconds}`);
   args.push('-c:v', 'libx264', '-pix_fmt', 'yuv420p');
+  if (bitrate) args.push('-b:v', bitrate, '-maxrate', bitrate, '-bufsize', bitrate);
   if (audio) args.push('-c:a', 'aac', '-shortest');
   args.push('-metadata', `comment=${seed}`, dest);
   execFileSync(process.env.FFMPEG_PATH ?? 'ffmpeg', args);

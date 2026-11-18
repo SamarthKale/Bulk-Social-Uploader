@@ -16,6 +16,10 @@ export interface RuntimeDeps {
   uploadBaseUrl?: string;
   fetchVideos?: PollDeps['fetchVideos'];
   pollMs?: number;
+  /** Upload chunk size in bytes (multiple of 256 KiB). Tests use small chunks to crash mid-upload. */
+  chunkBytes?: number;
+  /** Base backoff for upload retries in ms (tests shorten it). */
+  retryBaseMs?: number;
   statusIntervalMs?: number;
   /** Overrides the scan interval setting (tests). */
   scanIntervalMs?: number;
@@ -31,7 +35,7 @@ export async function startRuntime(deps: RuntimeDeps): Promise<{ stop(): Promise
   await recover(db);
 
   const ai = startAiWorker({ db, getProvider: deps.getProvider, tempDir: deps.tempDir, pollMs: deps.pollMs }, () => getSettings(db).aiWorkers);
-  const upload = startUploadWorker({ db, auth: deps.auth, baseUrl: deps.uploadBaseUrl, pollMs: deps.pollMs }, () => getSettings(db).uploadWorkers);
+  const upload = startUploadWorker({ db, auth: deps.auth, baseUrl: deps.uploadBaseUrl, pollMs: deps.pollMs, chunkBytes: deps.chunkBytes, retryBaseMs: deps.retryBaseMs }, () => getSettings(db).uploadWorkers);
   const monitor = startStatusMonitor(
     { db, getToken: (id) => deps.auth.getAccessToken(id), fetchVideos: deps.fetchVideos ?? makeFetchVideos({ baseUrl: deps.uploadBaseUrl }) },
     deps.statusIntervalMs ?? 60_000,
