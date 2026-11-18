@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, errorText } from '../api';
-import { Button, Card, ErrorBanner, Field, PageHeader, Toggle, inputCls, usePoll } from '../components/ui';
+import { Button, Card, ErrorBanner, Field, Icon, Notice, PageHeader, Spinner, Toggle, inputCls, usePoll } from '../components/ui';
 import type { Settings } from '../types';
 
 export function SettingsPage() {
@@ -9,6 +9,7 @@ export function SettingsPage() {
   const [key, setKey] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState('');
+  const [test, setTest] = useState<{ ok: boolean; model?: string; ms?: number; error?: string; hint?: string } | 'running' | null>(null);
 
   useEffect(() => { if (s.data && !form) setForm(s.data); }, [s.data, form]);
   if (!form) return <div><PageHeader title="Settings" /><ErrorBanner error={s.error} /></div>;
@@ -40,7 +41,36 @@ export function SettingsPage() {
           <Button disabled={key.trim().length < 8} onClick={() => run(async () => { await api.put('/api/settings/gemini-key', { key: key.trim() }); setKey(''); }, 'API key saved')}>Save key</Button>
           {form.geminiKeySet && <Button variant="danger" onClick={() => run(() => api.del('/api/settings/gemini-key'), 'API key removed')}>Remove key</Button>}
         </div>
-        <Field label="Model" hint="Which Gemini model writes titles and descriptions."><input className={inputCls} value={form.geminiModel} onChange={(e) => setForm({ ...form, geminiModel: e.target.value })} /></Field>
+        <Field label="Model" hint="Which Gemini model writes titles and descriptions. If you get quota or 'no longer available' errors, pick another one from the list and press Test Gemini.">
+          <input className={inputCls} list="gemini-models" value={form.geminiModel} onChange={(e) => setForm({ ...form, geminiModel: e.target.value })} />
+          <datalist id="gemini-models">
+            {['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-3-flash-preview', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'].map((m) => <option key={m} value={m} />)}
+          </datalist>
+        </Field>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            onClick={async () => {
+              setTest('running');
+              try {
+                await api.put('/api/settings', { geminiModel: form.geminiModel }); // test exactly what is typed
+                setTest(await api.post('/api/settings/test-gemini'));
+              } catch (e) {
+                setTest({ ok: false, error: errorText(e) });
+              }
+            }}
+            disabled={test === 'running'}
+          >
+            {test === 'running' ? <Spinner /> : <Icon name="refresh" />}Test Gemini
+          </Button>
+          <span className="text-xs text-zinc-500">Sends one tiny text request. No video data.</span>
+        </div>
+        {test && test !== 'running' && (
+          test.ok
+            ? <Notice tone="success" className="mb-0">Gemini works with <b>{test.model}</b> (answered in {test.ms} ms).</Notice>
+            : <Notice tone="error" className="mb-0"><b>Gemini did not answer.</b> {test.error}{test.hint ? <div className="mt-1">{test.hint}</div> : null}</Notice>
+        )}
+        <Toggle checked={form.enhanceImports} onChange={(v) => setForm({ ...form, enhanceImports: v })} label="Improve imported titles, descriptions and hashtags with Gemini" />
+        <p className="-mt-1 text-xs text-zinc-500">When a clip JSON is imported, Gemini rewrites each title and description and adds more hashtags, using only the facts in the JSON. Only text is sent. Needs the key and the consent below.</p>
         <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950">
           <Toggle checked={form.aiConsent} onChange={(v) => setForm({ ...form, aiConsent: v })} label="Allow sending video frames to Google Gemini" />
           <p className="mt-1 text-amber-900 dark:text-amber-200">When on, a few small still frames sampled from each video (and the file name) leave this computer and are sent to Google to write the title and description. Your video files are never uploaded to the AI provider. When off, no AI generation happens and you can write metadata by hand.</p>

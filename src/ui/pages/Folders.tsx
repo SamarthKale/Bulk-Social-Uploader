@@ -2,11 +2,12 @@ import { useState } from 'react';
 import { api, errorText } from '../api';
 import { FolderCard } from '../components/FolderCard';
 import { Button, ErrorBanner, PageHeader, inputCls, usePoll } from '../components/ui';
-import type { Folder, Profile } from '../types';
+import type { Folder, Profile, Settings } from '../types';
 
 export function Folders() {
   const folders = usePoll(() => api.get<Folder[]>('/api/folders'), 4000);
   const profiles = usePoll(() => api.get<Profile[]>('/api/profiles'), 30000);
+  const settings = usePoll(() => api.get<Settings>('/api/settings'), 15000);
   const [error, setError] = useState<string | null>(null);
   const [manual, setManual] = useState('');
 
@@ -44,7 +45,7 @@ export function Folders() {
       {folders.data && folders.data.length === 0 && <p className="text-zinc-500">No folders yet. Click "Add folder" to choose one.</p>}
       <div className="space-y-3">
         {folders.data?.map((f) => (
-          <FolderCard key={f.id} folder={f} profiles={profiles.data ?? []} onChange={folders.reload} onError={setError} />
+          <FolderCard key={`${f.id}-${settings.data ? 1 : 0}`} folder={f} profiles={profiles.data ?? []} geminiReady={!!settings.data?.geminiKeySet && !!settings.data?.aiConsent} enhanceDefault={settings.data?.enhanceImports ?? true} onChange={folders.reload} onError={setError} />
         ))}
       </div>
     </div>

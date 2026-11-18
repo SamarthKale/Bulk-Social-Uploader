@@ -1,9 +1,12 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fixture } from '../fixtures/make-fixtures';
+
+/** Clicks a sidebar link (the dashboard text also links to some pages). */
+const nav = (page: Page, name: string) => page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name }).click();
 
 let server: ChildProcess;
 let url = '';
@@ -39,18 +42,25 @@ test('add a folder, scan it, edit metadata by hand, and never expose the API key
   await expect(page.getByText('No data yet')).toBeVisible();
 
   // Folders: add through the (stubbed) folder dialog, then scan.
-  await page.getByRole('link', { name: 'Folders' }).click();
+  await nav(page, 'Folders');
   await page.getByRole('button', { name: 'Add folder' }).click();
   await expect(page.getByTestId('folder-name')).toHaveText(path.basename(videosDir));
   await page.getByRole('button', { name: 'Scan now' }).click();
   await expect(page.getByTestId('scan-result')).toContainText('Found 1', { timeout: 30_000 });
 
-  // Library: the video is listed with its duration.
-  await page.getByRole('link', { name: 'Video Library' }).click();
+  // Upload a clip JSON through the UI: its text is applied to the matching video.
+  const clipJson = { stream: { name: 'Test stream' }, clips: [{ file: 'my clip.mp4', post_title: 'Imported from JSON', description: 'Imported description', hashtags: ['#gta6', '#shorts'], hook_text: 'Hook', reason: 'spike' }] };
+  await page.getByLabel('Clip JSON file').setInputFiles({ name: 'clips.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(clipJson)) });
+  await expect(page.getByTestId('scan-result')).toContainText('clips.json: 1 updated');
+
+  // Library: the video is listed with its duration, and its title came from the JSON.
+  await nav(page, 'Video Library');
   const row = page.getByTestId('video-row');
   await expect(row).toHaveCount(1);
   await expect(row).toContainText('my clip.mp4');
   await expect(row).toContainText('0:01');
+  await expect(row).toContainText('Imported from JSON');
+  await expect(row).toContainText('From JSON');
 
   // Edit metadata by hand, save, reload, and see it persisted.
   await row.getByRole('button', { name: 'my clip.mp4' }).click();
@@ -61,9 +71,15 @@ test('add a folder, scan it, edit metadata by hand, and never expose the API key
   await expect(dialog.getByText('Saved')).toBeVisible();
   await page.reload();
   await expect(page.getByTestId('video-row')).toContainText('Insane 1v4 clutch');
+  await expect(page.getByTestId('video-row')).toContainText('Written by you');
+
+  // The shell shows the pipeline on the dashboard.
+  await nav(page, 'Dashboard');
+  await expect(page.getByTestId('count-detected')).toHaveText('1');
+  await expect(page.getByTestId('count-metadataReady')).toHaveText('1');
 
   // Settings: the Gemini key is write-only and never shown back.
-  await page.getByRole('link', { name: 'Settings' }).click();
+  await nav(page, 'Settings');
   await page.getByLabel('Gemini API key').fill('SECRET-KEY-VALUE-123');
   await page.getByRole('button', { name: 'Save key' }).click();
   await expect(page.getByRole('status')).toContainText('API key saved');

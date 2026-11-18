@@ -49,6 +49,8 @@ export interface VideoRow {
   requested_visibility: string | null;
   youtube_url: string | null;
   last_error: string | null;
+  enhance_status: string;
+  metadata_source: string | null;
 }
 
 export interface Job {
@@ -85,6 +87,7 @@ export interface Settings {
   scanIntervalMin: number;
   queuePaused: boolean;
   geminiKeySet: boolean;
+  enhanceImports: boolean;
 }
 
 export interface HistoryRow {

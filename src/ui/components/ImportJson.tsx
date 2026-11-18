@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { api, errorText } from '../api';
-import { Button } from './ui';
+import { Button, Icon } from './ui';
 
 interface ImportResult {
   matched: number;
@@ -9,10 +9,14 @@ interface ImportResult {
   skipped: number;
   unmatched: string[];
   errors: { file: string; reason: string }[];
+  enhanceQueued?: number;
+  enhanceSkipped?: string;
 }
 
 export function summarize(r: ImportResult): string {
   const parts = [`${r.applied} updated`];
+  if (r.enhanceQueued) parts.push(`${r.enhanceQueued} being improved with Gemini`);
+  if (r.enhanceSkipped) parts.push(r.enhanceSkipped);
   if (r.unchanged) parts.push(`${r.unchanged} already up to date`);
   if (r.skipped) parts.push(`${r.skipped} left alone (uploaded, uploading or edited by you)`);
   if (r.unmatched.length) parts.push(`${r.unmatched.length} entries had no video in this folder`);
@@ -21,7 +25,7 @@ export function summarize(r: ImportResult): string {
 }
 
 /** Picks a clip JSON on this computer and applies its titles, descriptions and hashtags to a folder's videos. */
-export function ImportJsonButton({ folderId, disabled, onDone, onError }: { folderId: number | null; disabled?: boolean; onDone: (summary: string) => void; onError: (m: string) => void }) {
+export function ImportJsonButton({ folderId, disabled, enhance, onDone, onError }: { folderId: number | null; disabled?: boolean; enhance?: boolean; onDone: (summary: string) => void; onError: (m: string) => void }) {
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
 
@@ -35,7 +39,7 @@ export function ImportJsonButton({ folderId, disabled, onDone, onError }: { fold
       } catch {
         throw new Error(`${file.name} is not valid JSON`);
       }
-      const r = await api.post<ImportResult>(`/api/folders/${folderId}/import-metadata`, json);
+      const r = await api.post<ImportResult>(`/api/folders/${folderId}/import-metadata${enhance ? '?enhance=1' : ''}`, json);
       onDone(`${file.name}: ${summarize(r)}`);
     } catch (e) {
       onError(errorText(e));
@@ -49,7 +53,7 @@ export function ImportJsonButton({ folderId, disabled, onDone, onError }: { fold
     <>
       <input ref={input} type="file" accept=".json,application/json" className="hidden" aria-label="Clip JSON file" onChange={(e) => void pick(e.target.files?.[0])} />
       <Button disabled={disabled || busy || folderId === null} onClick={() => input.current?.click()}>
-        {busy ? 'Importing...' : 'Import metadata JSON'}
+        <Icon name="file" />{busy ? 'Importing...' : 'Import metadata JSON'}
       </Button>
     </>
   );

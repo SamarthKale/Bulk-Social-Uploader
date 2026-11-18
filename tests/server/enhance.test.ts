@@ -151,6 +151,18 @@ describe('buildEnhancePrompt', () => {
     expect(userText).toContain('CarryisLive');
   });
 
+  it('forbids adding details the data does not state, and prefers shorter over guessing', () => {
+    const { systemPrompt } = buildEnhancePrompt(getProfile(db, 1)!, { title: 't', description: 'd', hashtags: [] }, {});
+    expect(systemPrompt).toMatch(/graphics|chat|reaction/i); // names the kinds of detail models tend to make up
+    expect(systemPrompt).toMatch(/unless (it is|they are|the data)/i);
+    expect(systemPrompt).toMatch(/shorter|less/i);
+  });
+
+  it('asks for a genuinely rewritten title, not the current one repeated', () => {
+    const { systemPrompt } = buildEnhancePrompt(getProfile(db, 1)!, { title: 't', description: 'd', hashtags: [] }, {});
+    expect(systemPrompt).toMatch(/do not (return|repeat) the current title|different from the current title/i);
+  });
+
   it('follows the folder profile language and tone', () => {
     updateProfile(db, 1, { language: 'Hinglish', tone: 'loud roast humour' });
     const { systemPrompt } = buildEnhancePrompt(getProfile(db, 1)!, { title: 't', description: 'd', hashtags: [] }, {});
@@ -456,5 +468,38 @@ describe('routes', () => {
     expect(getSettings(db).enhanceImports).toBe(true);
     setSettings(db, { enhanceImports: false });
     expect(getSettings(db).enhanceImports).toBe(false);
+  });
+});
+
+describe('Gemini connection test', () => {
+  it('reports success with the model and how long it took', async () => {
+    const app = buildApp({ db, token: 't', getProvider: async () => new FakeProvider({ respond: () => ({ ok: true }) }) });
+    setSettings(db, { aiConsent: true });
+    const r = await app.inject({ method: 'POST', url: '/api/settings/test-gemini', headers: H });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ ok: true, model: 'fake-model' });
+    expect(typeof r.json().ms).toBe('number');
+  });
+
+  it('reports a provider error in plain words without leaking anything', async () => {
+    const app = buildApp({ db, token: 't', getProvider: async () => new FakeProvider({ respond: () => { throw new AiError('You exceeded your current quota', true, 429); } }) });
+    const r = await app.inject({ method: 'POST', url: '/api/settings/test-gemini', headers: H });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ ok: false, status: 429 });
+    expect(r.json().error).toMatch(/quota/i);
+    expect(r.json().hint).toMatch(/model|quota|wait/i);
+  });
+
+  it('says what is missing when no key is saved', async () => {
+    const app = buildApp({ db, token: 't', getProvider: async () => null });
+    const r = await app.inject({ method: 'POST', url: '/api/settings/test-gemini', headers: H });
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error).toMatch(/key/i);
+  });
+
+  it('works even before consent is ticked, because it sends no video data', async () => {
+    const app = buildApp({ db, token: 't', getProvider: async () => new FakeProvider({ respond: () => ({ ok: true }) }) });
+    expect(getSettings(db).aiConsent).toBe(false);
+    expect((await app.inject({ method: 'POST', url: '/api/settings/test-gemini', headers: H })).json().ok).toBe(true);
   });
 });

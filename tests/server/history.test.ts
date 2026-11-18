@@ -155,6 +155,24 @@ describe('dashboard', () => {
     expect(d.paused).toBe(false);
   });
 
+  it('reports jobs blocked by YouTube limits so the UI can explain why nothing uploads', async () => {
+    addUpload({ status: 'BLOCKED_BY_CHANNEL_LIMIT', ytId: null });
+    addUpload({ status: 'BLOCKED_BY_CHANNEL_LIMIT', ytId: null });
+    addUpload({ status: 'BLOCKED_BY_QUOTA', ytId: null });
+    db.prepare("UPDATE upload_jobs SET last_error_message='The user has exceeded the number of videos they may upload.' WHERE status='BLOCKED_BY_CHANNEL_LIMIT'").run();
+    db.prepare("UPDATE upload_jobs SET next_retry_at='2026-11-20T08:05:00.000Z' WHERE status='BLOCKED_BY_QUOTA'").run();
+    const app = buildApp({ db, token: 't' });
+    const d = (await app.inject({ method: 'GET', url: '/api/dashboard', headers: H })).json();
+    expect(d.blocked).toMatchObject({ channelLimit: 2, quota: 1, resumeAfter: '2026-11-20T08:05:00.000Z' });
+    expect(d.blocked.message).toMatch(/exceeded/);
+  });
+
+  it('blocked is all zeros when nothing is blocked', async () => {
+    const app = buildApp({ db, token: 't' });
+    const d = (await app.inject({ method: 'GET', url: '/api/dashboard', headers: H })).json();
+    expect(d.blocked).toEqual({ channelLimit: 0, quota: 0, resumeAfter: null, message: null });
+  });
+
   it('counts each state and shows the confirmed channel and recent activity', async () => {
     addUpload({ status: 'UPLOAD_COMPLETE', processing: 'READY', privacy: 'public' });
     addUpload({ status: 'UPLOAD_COMPLETE', processing: 'PROCESSING' });

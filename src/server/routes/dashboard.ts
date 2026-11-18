@@ -24,8 +24,19 @@ export function registerDashboardRoutes(app: FastifyInstance): void {
          FROM videos v JOIN folders f ON f.id = v.folder_id WHERE f.is_enabled = 1`,
       )
       .get();
+    // Why uploads are not moving, if YouTube told us to stop.
+    const b = db
+      .prepare(
+        `SELECT COALESCE(SUM(status = 'BLOCKED_BY_CHANNEL_LIMIT'), 0) AS channelLimit,
+                COALESCE(SUM(status = 'BLOCKED_BY_QUOTA'), 0) AS quota,
+                MIN(CASE WHEN status = 'BLOCKED_BY_QUOTA' THEN next_retry_at END) AS resumeAfter,
+                MAX(CASE WHEN status IN ('BLOCKED_BY_CHANNEL_LIMIT','BLOCKED_BY_QUOTA') THEN last_error_message END) AS message
+         FROM upload_jobs`,
+      )
+      .get() as { channelLimit: number; quota: number; resumeAfter: string | null; message: string | null };
     return {
       counts: c,
+      blocked: b,
       channel: db.prepare('SELECT id, channel_id, channel_title FROM youtube_accounts WHERE confirmed = 1 AND is_enabled = 1 ORDER BY id LIMIT 1').get() ?? null,
       paused: getSettings(db).queuePaused,
       recent: db.prepare('SELECT id, entity_type, entity_id, event_type, message, created_at FROM activity_log ORDER BY id DESC LIMIT 20').all(),

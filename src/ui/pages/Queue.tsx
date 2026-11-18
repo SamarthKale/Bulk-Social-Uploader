@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, errorText } from '../api';
-import { Button, Card, ErrorBanner, PageHeader, StatusBadge, inputCls, usePoll, fmtSize } from '../components/ui';
+import { Button, Card, EmptyState, ErrorBanner, Icon, Notice, PageHeader, StatusBadge, inputCls, usePoll, fmtSize } from '../components/ui';
 import type { Job } from '../types';
 
 const RETRYABLE = ['FAILED_PERMANENTLY', 'CANCELLED', 'RETRY_WAIT', 'BLOCKED_BY_QUOTA', 'BLOCKED_BY_CHANNEL_LIMIT', 'UPLOAD_PAUSED'];
@@ -17,17 +17,37 @@ export function Queue() {
     setError(null);
     try { await fn(); q.reload(); } catch (e) { setError(errorText(e)); }
   };
-  const jobs = (q.data?.jobs ?? []).filter((j) => showDone || j.status !== 'UPLOAD_COMPLETE');
+  const all = q.data?.jobs ?? [];
+  const jobs = all.filter((j) => showDone || j.status !== 'UPLOAD_COMPLETE');
+  const n = (...s: string[]) => all.filter((j) => s.includes(j.status)).length;
+  const blocked = all.filter((j) => j.status === 'BLOCKED_BY_CHANNEL_LIMIT' || j.status === 'BLOCKED_BY_QUOTA');
+  const stats: [string, number, string][] = [
+    ['Waiting', n('QUEUED', 'RETRY_WAIT'), 'text-sky-700 dark:text-sky-300'],
+    ['Uploading', n('UPLOADING'), 'text-indigo-700 dark:text-indigo-300'],
+    ['Blocked by YouTube', blocked.length, 'text-amber-700 dark:text-amber-300'],
+    ['Paused / needs you', n('UPLOAD_PAUSED', 'UPLOAD_OUTCOME_UNKNOWN', 'FAILED_PERMANENTLY'), 'text-red-700 dark:text-red-300'],
+    ['Uploaded', n('UPLOAD_COMPLETE'), 'text-emerald-700 dark:text-emerald-300'],
+  ];
 
   return (
     <div>
-      <PageHeader title="Processing Queue">
+      <PageHeader title="Processing Queue" subtitle="Uploads go to YouTube one at a time. Nothing is ever lost: if YouTube says stop, the rest wait here.">
         {q.data?.paused ? <Button variant="primary" onClick={() => act(() => api.post('/api/queue/resume'))}>Resume uploads</Button> : <Button onClick={() => act(() => api.post('/api/queue/pause'))}>Pause uploads</Button>}
       </PageHeader>
       <ErrorBanner error={error ?? q.error} />
       {q.data?.paused && <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">Uploads are paused. An upload in progress stops after its current chunk and continues from there when you resume.</div>}
+      {blocked.length > 0 && (
+        <Notice tone="warn" action={<div className="flex gap-2"><Button onClick={() => act(() => api.post(`/api/jobs/${blocked[0].id}/retry`))}><Icon name="refresh" />Retry one</Button><Button onClick={() => { if (confirm(`Retry all ${blocked.length} blocked uploads?`)) void act(async () => { for (const b of blocked) await api.post(`/api/jobs/${b.id}/retry`); }); }}>Retry all</Button></div>}>
+          <b>YouTube stopped these uploads ({blocked.length}).</b> {blocked.some((b) => b.status === 'BLOCKED_BY_CHANNEL_LIMIT') ? "Your channel hit its upload limit, which usually clears about 24 hours after the earlier uploads. " : 'The daily API quota was reached; they resume automatically after the reset. '}Press <b>Retry one</b> to test whether YouTube accepts uploads again. If it does, press Resume or Retry all.
+        </Notice>
+      )}
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
+        {stats.map(([label, value, tone]) => (
+          <Card key={label} className="py-3"><div className={`text-2xl font-semibold tabular-nums ${tone}`}>{value}</div><div className="text-xs text-zinc-500">{label}</div></Card>
+        ))}
+      </div>
       <label className="mb-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} /> Show finished uploads</label>
-      {q.data && jobs.length === 0 && <p className="text-zinc-500">Nothing in the queue. Videos appear here when they are approved or auto-published.</p>}
+      {q.data && jobs.length === 0 && <EmptyState icon="list" title="Nothing in the queue">Videos appear here when they are approved or auto-published.</EmptyState>}
       <div className="space-y-2">
         {jobs.map((j) => {
           const pct = j.file_size_bytes ? Math.min(100, Math.round((j.bytes_sent / j.file_size_bytes) * 100)) : 0;

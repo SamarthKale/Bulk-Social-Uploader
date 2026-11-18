@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, download, errorText } from '../api';
-import { Button, ErrorBanner, PageHeader, StatusBadge, inputCls, usePoll, fmtDate } from '../components/ui';
+import { Button, ErrorBanner, PageHeader, StatusBadge, inputCls, selectCls, usePoll, fmtDate } from '../components/ui';
 import type { HistoryRow } from '../types';
 
 export function History() {
@@ -21,7 +21,7 @@ export function History() {
       <ErrorBanner error={error ?? h.error} />
       <div className="mb-3 flex flex-wrap gap-2">
         <input className={`${inputCls} max-w-64`} placeholder="Search title, file or YouTube id" aria-label="Search history" value={text} onChange={(e) => setText(e.target.value)} />
-        <select className={`${inputCls} w-auto`} aria-label="Result" value={status} onChange={(e) => setStatus(e.target.value)}>
+        <select className={selectCls} aria-label="Result" value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="">Any result</option>
           {['UPLOAD_COMPLETE', 'UPLOADING', 'QUEUED', 'RETRY_WAIT', 'BLOCKED_BY_QUOTA', 'FAILED_PERMANENTLY', 'UPLOAD_OUTCOME_UNKNOWN', 'CANCELLED'].map((s) => <option key={s}>{s}</option>)}
         </select>

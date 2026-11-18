@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { api, errorText } from '../api';
 import { MetadataEditor } from '../components/MetadataEditor';
 import { ImportJsonButton } from '../components/ImportJson';
-import { Button, ErrorBanner, PageHeader, StatusBadge, fmtDuration, fmtSize, inputCls, usePoll } from '../components/ui';
-import type { Folder, VideoRow } from '../types';
+import { Button, EmptyState, ErrorBanner, Icon, PageHeader, SourceChip, StatusBadge, fmtDuration, fmtSize, inputCls, selectCls, usePoll } from '../components/ui';
+import type { Folder, Settings, VideoRow } from '../types';
 
 const thumbCache = new Map<number, string>();
 
@@ -35,6 +35,8 @@ export function Library() {
   if (f.errorsOnly) qs.set('errorsOnly', '1');
   const list = usePoll(() => api.get<{ videos: VideoRow[] }>(`/api/videos?${qs}`), 3000);
   const folders = usePoll(() => api.get<Folder[]>('/api/folders'), 15000);
+  const settings = usePoll(() => api.get<Settings>('/api/settings'), 20000);
+  const geminiReady = !!settings.data?.geminiKeySet && !!settings.data?.aiConsent;
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<number | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'id', dir: -1 });
@@ -58,7 +60,7 @@ export function Library() {
   const allVisible = rows.slice(0, shown).map((r) => r.id);
   const bulk = async (label: string, fn: () => Promise<unknown>) => {
     setError(null); setNote('');
-    try { await fn(); setNote(label); list.reload(); } catch (e) { setError(errorText(e)); }
+    try { await fn(); if (label) setNote(label); list.reload(); } catch (e) { setError(errorText(e)); }
   };
   const header = (key: SortKey, label: string) => (
     <button className="font-medium hover:underline" onClick={() => setSort((s) => ({ key, dir: s.key === key ? (-s.dir as 1 | -1) : 1 }))}>
@@ -69,26 +71,26 @@ export function Library() {
 
   return (
     <div>
-      <PageHeader title="Video Library">
-        <ImportJsonButton folderId={importFolder} onDone={(m) => { setNote(m); list.reload(); }} onError={setError} />
+      <PageHeader title="Video Library" subtitle="Every video LocalTube has found, with its title, description and upload state. Click a filename to edit it.">
+        <ImportJsonButton folderId={importFolder} enhance={geminiReady && (settings.data?.enhanceImports ?? false)} onDone={(m) => { setNote(m); list.reload(); }} onError={setError} />
       </PageHeader>
       {importFolder === null && folders.data && folders.data.length > 1 && <p className="mb-2 text-xs text-zinc-500">To import a metadata JSON here, first choose a folder in the folder filter.</p>}
       <ErrorBanner error={error ?? list.error} />
       <div className="mb-3 flex flex-wrap items-end gap-2">
         <input className={`${inputCls} max-w-56`} placeholder="Search filename or title" aria-label="Search" value={f.text} onChange={(e) => setF({ ...f, text: e.target.value })} />
-        <select className={`${inputCls} w-auto`} aria-label="Folder" value={f.folderId} onChange={(e) => setF({ ...f, folderId: e.target.value })}>
+        <select className={selectCls} aria-label="Folder" value={f.folderId} onChange={(e) => setF({ ...f, folderId: e.target.value })}>
           <option value="">All folders</option>
           {folders.data?.map((x) => <option key={x.id} value={x.id}>{x.display_name}</option>)}
         </select>
-        <select className={`${inputCls} w-auto`} aria-label="Metadata status" value={f.metadataStatus} onChange={(e) => setF({ ...f, metadataStatus: e.target.value })}>
+        <select className={selectCls} aria-label="Metadata status" value={f.metadataStatus} onChange={(e) => setF({ ...f, metadataStatus: e.target.value })}>
           <option value="">Any metadata</option>
           {['NOT_STARTED', 'ANALYZING', 'GENERATING', 'READY', 'STALE', 'FAILED'].map((s) => <option key={s}>{s}</option>)}
         </select>
-        <select className={`${inputCls} w-auto`} aria-label="Approval status" value={f.approvalStatus} onChange={(e) => setF({ ...f, approvalStatus: e.target.value })}>
+        <select className={selectCls} aria-label="Approval status" value={f.approvalStatus} onChange={(e) => setF({ ...f, approvalStatus: e.target.value })}>
           <option value="">Any approval</option>
           {['NOT_REQUIRED', 'PENDING', 'APPROVED', 'REJECTED'].map((s) => <option key={s}>{s}</option>)}
         </select>
-        <select className={`${inputCls} w-auto`} aria-label="Upload status" value={f.uploadStatus} onChange={(e) => setF({ ...f, uploadStatus: e.target.value })}>
+        <select className={selectCls} aria-label="Upload status" value={f.uploadStatus} onChange={(e) => setF({ ...f, uploadStatus: e.target.value })}>
           <option value="">Any upload state</option>
           {['NOT_QUEUED', 'QUEUED', 'UPLOADING', 'UPLOAD_COMPLETE', 'FAILED_PERMANENTLY', 'UPLOAD_OUTCOME_UNKNOWN'].map((s) => <option key={s}>{s}</option>)}
         </select>
@@ -97,15 +99,16 @@ export function Library() {
       <div className="mb-3 flex flex-wrap items-center gap-2" aria-label="Bulk actions">
         <span className="text-sm text-zinc-500">{ids.length} selected</span>
         <Button disabled={!ids.length} onClick={() => bulk('Queued for metadata generation', () => api.post('/api/videos/regenerate', { ids }))}>Generate / regenerate metadata</Button>
+        <Button variant="soft" disabled={!ids.length || !geminiReady} title={geminiReady ? 'Gemini rewrites the selected titles and descriptions and adds hashtags' : 'Add your Gemini key and allow it in Settings first'} onClick={() => bulk('', async () => { const r = await api.post<{ queued: number }>('/api/videos/enhance', { ids }); setNote(r.queued ? `${r.queued} sent to Gemini to improve. Uploads wait for it.` : 'Nothing to improve: those videos are uploaded, written by you, or have no text yet.'); })}><Icon name="sparkles" />Improve with Gemini</Button>
         <Button disabled={!ids.length} onClick={() => bulk('Approved', () => api.post('/api/videos/approve', { ids }))}>Approve</Button>
         <Button disabled={!ids.length} onClick={() => bulk('Rejected', () => api.post('/api/videos/reject', { ids }))}>Reject / skip</Button>
-        <Button variant="primary" disabled={!ids.length} onClick={() => bulk('Added to the upload queue', async () => { const r = await api.post<{ queued: number }>('/api/queue/enqueue', { ids }); setNote(`${r.queued} added to the upload queue`); })}>Add to upload queue</Button>
+        <Button variant="primary" disabled={!ids.length} onClick={() => bulk('', async () => { const r = await api.post<{ queued: number }>('/api/queue/enqueue', { ids }); setNote(`${r.queued} added to the upload queue`); })}>Add to upload queue</Button>
         {note && <span className="text-sm text-emerald-600">{note}</span>}
       </div>
-      {list.data && rows.length === 0 && <p className="text-zinc-500">No videos match. Add a folder and scan it, or clear the filters.</p>}
-      <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+      {list.data && rows.length === 0 && <EmptyState icon="film" title="No videos match">Add a folder and scan it, or clear the filters above.</EmptyState>}
+      <div className="overflow-x-auto rounded-xl border border-zinc-200 shadow-sm dark:border-zinc-800">
         <table className="w-full text-left text-sm">
-          <thead className="bg-zinc-100 dark:bg-zinc-900">
+          <thead className="bg-zinc-100 text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900">
             <tr>
               <th className="p-2"><input type="checkbox" aria-label="Select all" checked={allVisible.length > 0 && allVisible.every((i) => selected.has(i))} onChange={(e) => setSelected(e.target.checked ? new Set(allVisible) : new Set())} /></th>
               <th className="p-2" />
@@ -125,11 +128,11 @@ export function Library() {
               <tr key={v.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/60" data-testid="video-row">
                 <td className="p-2"><input type="checkbox" aria-label={`Select ${v.filename}`} checked={selected.has(v.id)} onChange={() => toggle(v.id)} /></td>
                 <td className="p-2"><Thumb id={v.id} /></td>
-                <td className="p-2"><button className="text-left font-medium text-indigo-600 hover:underline" onClick={() => setEditing(v.id)}>{v.filename}</button>{v.discovery_status !== 'VALID' && <div><StatusBadge status={v.discovery_status} /></div>}</td>
+                <td className="p-2"><button className="block max-w-[14rem] truncate text-left font-medium text-indigo-600 hover:underline" title={v.filename} onClick={() => setEditing(v.id)}>{v.filename}</button>{v.discovery_status !== 'VALID' && <div><StatusBadge status={v.discovery_status} /></div>}</td>
                 <td className="p-2">{v.folder_name}</td>
                 <td className="p-2">{fmtDuration(v.duration_seconds)}</td>
                 <td className="p-2">{fmtSize(v.file_size_bytes)}</td>
-                <td className="max-w-64 truncate p-2" title={v.title ?? ''}>{v.title ?? <span className="text-zinc-400">none yet</span>}</td>
+                <td className="max-w-72 p-2"><div className="truncate" title={v.title ?? ''}>{v.title ?? <span className="text-zinc-400">none yet</span>}</div><div className="mt-1"><SourceChip source={v.metadata_source} enhance={v.enhance_status} /></div></td>
                 <td className="p-2"><StatusBadge status={v.metadata_status} /></td>
                 <td className="p-2"><StatusBadge status={v.approval_status} /></td>
                 <td className="p-2"><StatusBadge status={v.upload_status} />{v.last_error && <div className="max-w-48 truncate text-xs text-red-600" title={v.last_error}>{v.last_error}</div>}</td>

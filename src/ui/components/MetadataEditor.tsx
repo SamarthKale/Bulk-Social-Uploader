@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, errorText } from '../api';
 import type { VideoRow } from '../types';
-import { Button, ErrorBanner, Field, StatusBadge, inputCls } from './ui';
+import { Button, ErrorBanner, Field, Icon, SourceChip, StatusBadge, inputCls } from './ui';
 
 const parseTags = (s: string) => s.split(/[\s,]+/).filter(Boolean).map((t) => (t.startsWith('#') ? t : `#${t}`));
 
@@ -34,6 +34,10 @@ export function MetadataEditor({ video, onClose, onChange }: { video: VideoRow; 
   };
   const regen = (only?: 'title' | 'description' | 'hashtags') => run(`regen-${only ?? 'all'}`, () => api.post(`/api/videos/${video.id}/regenerate`, only ? { only } : {}));
 
+  const improve = () => run('improve', () => api.post(`/api/videos/${video.id}/enhance`), 'Improved with Gemini');
+  const restore = () => run('restore', () => api.post(`/api/videos/${video.id}/restore-original`), 'Original text restored');
+  const uploaded = ['UPLOADING', 'UPLOAD_COMPLETE', 'UPLOAD_OUTCOME_UNKNOWN'].includes(video.upload_status);
+
   const warnings: string[] = [];
   if (video.shorts_warning) warnings.push(video.shorts_warning);
   if (video.confidence === 'low') warnings.push('The AI had low confidence in this result. Please review it.');
@@ -50,7 +54,7 @@ export function MetadataEditor({ video, onClose, onChange }: { video: VideoRow; 
           </div>
           <Button variant="ghost" onClick={onClose} aria-label="Close">Close</Button>
         </div>
-        <div className="mb-3 flex flex-wrap gap-1"><StatusBadge status={video.metadata_status} label={`metadata ${video.metadata_status.toLowerCase()}`} /><StatusBadge status={video.approval_status} label={`approval ${video.approval_status.toLowerCase().replace('_', ' ')}`} /><StatusBadge status={video.upload_status} /></div>
+        <div className="mb-3 flex flex-wrap gap-1"><SourceChip source={video.metadata_source} enhance={video.enhance_status} /><StatusBadge status={video.metadata_status} label={`metadata ${video.metadata_status.toLowerCase()}`} /><StatusBadge status={video.approval_status} label={`approval ${video.approval_status.toLowerCase().replace('_', ' ')}`} /><StatusBadge status={video.upload_status} /></div>
         <ErrorBanner error={error ?? video.last_error} />
         {warnings.map((w) => <div key={w} className="mb-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">{w}</div>)}
         <div className="space-y-3">
@@ -64,6 +68,8 @@ export function MetadataEditor({ video, onClose, onChange }: { video: VideoRow; 
           <Button onClick={() => regen('title')} disabled={!!busy}>{busy === 'regen-title' ? '...' : 'Regenerate title'}</Button>
           <Button onClick={() => regen('description')} disabled={!!busy}>{busy === 'regen-description' ? '...' : 'Regenerate description'}</Button>
           <Button onClick={() => regen('hashtags')} disabled={!!busy}>{busy === 'regen-hashtags' ? '...' : 'Regenerate hashtags'}</Button>
+          <Button variant="soft" onClick={improve} disabled={!!busy || uploaded || !video.title} title="Gemini rewrites the title and description and adds more hashtags, using only the facts already here"><Icon name="sparkles" />{busy === 'improve' ? 'Improving...' : 'Improve with Gemini'}</Button>
+          {video.metadata_source === 'manifest-ai' && <Button onClick={restore} disabled={!!busy || uploaded}><Icon name="undo" />{busy === 'restore' ? '...' : 'Restore original'}</Button>}
         </div>
         <div className="mt-4 rounded-md border border-zinc-200 p-3 text-sm dark:border-zinc-800">
           <div className="mb-1 text-xs uppercase text-zinc-500">Preview on YouTube</div>

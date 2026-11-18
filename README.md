@@ -34,6 +34,17 @@ The app opens in your browser at `http://127.0.0.1:4317`. It only listens on you
 2. Configure the OAuth consent screen. While the app is in *Testing*, add your own Google account as a test user.
 3. Create credentials → **OAuth client ID** → application type **Desktop app**. Paste the client ID (and the secret, if one is shown) into Accounts & Channels. For a desktop app the secret is not confidential and LocalTube uses PKCE.
 
+## Using titles from a clip JSON, improved by Gemini
+
+If your clipper writes a JSON file with a title, description and hashtags for each clip (for example `clips.json`):
+
+- **Automatic:** any such JSON file inside a folder is read on every scan. Entries are matched to videos by file name, so the AI is not needed for those videos.
+- **By hand:** use **Import metadata JSON** on a folder card in **Folders**, or at the top of the **Video Library**, to pick a JSON file from anywhere.
+- **Improve with Gemini** (on by default once your key and consent are set): Gemini rewrites each title, writes a better description and adds more hashtags, using only the facts in the JSON (the clipper's caption, hook and reason are passed along as context). The folder's AI profile sets the language and tone, for example Hinglish. Only text is sent to Gemini, not video.
+- **Safe by design:** uploads wait for the improved text, but if Gemini fails or returns something invalid or suspicious (a link, instruction text), the original JSON text is kept and uploads are not blocked. Every version is kept: open a video in the Library and press **Restore original** at any time. A title you edit by hand is never overwritten automatically.
+- **Re-scans never undo it:** the same JSON entry is not imported twice; a changed entry replaces the improved text and is improved again.
+- **Settings > AI > Test Gemini** sends one tiny request and tells you in plain words if the key, quota or model is the problem. Google retires models and gives some keys little quota, so if you see a quota error pick another model from the list.
+
 ## Limits you should know about (verify before relying on them)
 
 These are from memory of Google's documentation and **must be re-checked** against the official pages listed in `CLAUDE.md` section 15:

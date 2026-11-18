@@ -4,8 +4,9 @@ import type { Folder, Profile } from '../types';
 import { Button, Card, StatusBadge, Toggle, inputCls, fmtDate } from './ui';
 import { ImportJsonButton } from './ImportJson';
 
-export function FolderCard({ folder, profiles, onChange, onError }: { folder: Folder; profiles: Profile[]; onChange: () => void; onError: (m: string) => void }) {
+export function FolderCard({ folder, profiles, geminiReady, enhanceDefault, onChange, onError }: { folder: Folder; profiles: Profile[]; geminiReady: boolean; enhanceDefault: boolean; onChange: () => void; onError: (m: string) => void }) {
   const [busy, setBusy] = useState(false);
+  const [enhance, setEnhance] = useState(enhanceDefault);
   const [result, setResult] = useState('');
 
   const patch = async (body: Record<string, unknown>) => {
@@ -71,12 +72,16 @@ export function FolderCard({ folder, profiles, onChange, onError }: { folder: Fo
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Button onClick={scan} disabled={busy}>{busy ? 'Scanning...' : 'Scan now'}</Button>
-        <ImportJsonButton folderId={folder.id} onDone={(m) => { setResult(m); onChange(); }} onError={onError} />
+        <ImportJsonButton folderId={folder.id} enhance={enhance && geminiReady} onDone={(m) => { setResult(m); onChange(); }} onError={onError} />
+        <label className={`flex items-center gap-1.5 text-xs ${geminiReady ? '' : 'opacity-50'}`} title={geminiReady ? 'Gemini rewrites each imported title, description and hashtags using only the facts in the JSON' : 'Add your Gemini key and allow it in Settings to use this'}>
+          <input type="checkbox" className="accent-violet-600" checked={enhance && geminiReady} disabled={!geminiReady} onChange={(e) => setEnhance(e.target.checked)} />
+          Improve with Gemini
+        </label>
         <Button variant="danger" onClick={remove}>Remove from LocalTube</Button>
         <span className="text-xs text-zinc-500">Last scan: {folder.last_scan_at ? fmtDate(folder.last_scan_at) : 'never'}</span>
         {result && <span className="text-xs text-zinc-600 dark:text-zinc-400" data-testid="scan-result">{result}</span>}
       </div>
-      <p className="text-xs text-zinc-500">A clip JSON (like clips.json) inside this folder is read automatically on every scan: its titles, descriptions and hashtags are used instead of the AI. You can also pick one by hand with "Import metadata JSON".</p>
+      <p className="text-xs text-zinc-500">A clip JSON (like clips.json) inside this folder is read automatically on every scan, and its titles, descriptions and hashtags are used. With "Improve with Gemini" on, Gemini then makes each title and description stronger and adds more hashtags, using only the facts in the JSON. Uploads wait for the improved text, and you can restore the original from the Library.</p>
     </Card>
   );
 }
