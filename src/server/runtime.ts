@@ -43,6 +43,10 @@ export async function startRuntime(deps: RuntimeDeps): Promise<{ stop(): Promise
   const scan = startScanLoop(db, {
     intervalMs: () => deps.scanIntervalMs ?? getSettings(db).scanIntervalMin * 60_000,
     stableMs: () => getSettings(db).stableMs,
+    enhance: async () => {
+      const s = getSettings(db);
+      return s.enhanceImports && s.aiConsent && !!(await deps.getProvider());
+    },
   });
 
   let stopping: Promise<void> | null = null;

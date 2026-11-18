@@ -12,6 +12,7 @@ export function registerDashboardRoutes(app: FastifyInstance): void {
       .prepare(
         `SELECT
            COUNT(*) AS detected,
+           COALESCE(SUM(v.enhance_status IN ('PENDING','RUNNING')), 0) AS enhancing,
            COALESCE(SUM(v.metadata_status = 'READY'), 0) AS metadataReady,
            COALESCE(SUM(v.approval_status = 'PENDING' AND v.metadata_status = 'READY' AND v.upload_status = 'NOT_QUEUED'), 0) AS awaitingApproval,
            COALESCE(SUM(v.upload_status IN ('QUEUED','RETRY_WAIT','BLOCKED_BY_QUOTA','BLOCKED_BY_CHANNEL_LIMIT','UPLOAD_PAUSED')), 0) AS queued,

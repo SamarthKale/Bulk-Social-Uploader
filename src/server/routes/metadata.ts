@@ -4,6 +4,8 @@ import { logActivity } from '../activity.js';
 import { generateMetadata } from '../ai/generate.js';
 import { validateMetadata } from '../ai/metadataSchema.js';
 import { rejectVideos } from '../queue/actions.js';
+import { enhanceMetadata } from '../ai/enhance.js';
+import { getSettings } from '../settings.js';
 
 const EditBody = z.object({ title: z.string(), description: z.string(), hashtags: z.array(z.string()) });
 const IdsBody = z.object({ ids: z.array(z.number().int()).min(1).max(5000) });
@@ -83,6 +85,54 @@ export function registerMetadataRoutes(app: FastifyInstance): void {
     let n = 0;
     db.transaction(() => { for (const id of b.data.ids) n += stmt.run(id).changes; })();
     return { updated: n };
+  });
+
+  const geminiProvider = async () => (getSettings(db).aiConsent ? await app.deps.getProvider() : null);
+  const NOT_READY = 'Gemini is not set up: add your API key and tick the consent box in Settings.';
+
+  // Queue many videos for Gemini to improve in the background. Hand-written, uploaded and empty ones are skipped.
+  app.post('/api/videos/enhance', async (req, reply) => {
+    const b = IdsBody.safeParse(req.body);
+    if (!b.success) return reply.code(400).send({ error: 'invalid body' });
+    if (!(await geminiProvider())) return reply.code(409).send({ error: NOT_READY });
+    const stmt = db.prepare(
+      `UPDATE videos SET enhance_status = 'PENDING', updated_at = datetime('now')
+       WHERE id = ? AND metadata_status = 'READY' AND enhance_status NOT IN ('PENDING','RUNNING')
+         AND upload_status NOT IN ('UPLOADING','UPLOAD_COMPLETE','UPLOAD_OUTCOME_UNKNOWN')
+         AND EXISTS (SELECT 1 FROM video_metadata m WHERE m.video_id = videos.id AND m.is_current = 1 AND COALESCE(m.provider,'') != 'user-edit')`,
+    );
+    let n = 0;
+    db.transaction(() => { for (const id of b.data.ids) n += stmt.run(id).changes; })();
+    return { queued: n };
+  });
+
+  // Improve one video right now, even if the user wrote its text (an explicit request).
+  app.post('/api/videos/:id/enhance', async (req, reply) => {
+    const id = idOf(req);
+    if (!db.prepare('SELECT 1 FROM videos WHERE id = ?').get(id)) return reply.code(404).send({ error: 'not found' });
+    const provider = await geminiProvider();
+    if (!provider) return reply.code(409).send({ error: NOT_READY });
+    const r = await enhanceMetadata({ db, provider }, id, { explicit: true });
+    if (r.status === 'skipped') return reply.code(409).send({ error: r.error });
+    if (r.status === 'failed') return reply.code(502).send({ error: r.error });
+    return db.prepare('SELECT * FROM video_metadata WHERE video_id = ? AND is_current = 1').get(id);
+  });
+
+  // Put the original clip-JSON text back, and stop it being improved again.
+  app.post('/api/videos/:id/restore-original', async (req, reply) => {
+    const id = idOf(req);
+    const v = db.prepare('SELECT upload_status FROM videos WHERE id = ?').get(id) as { upload_status: string } | undefined;
+    if (!v) return reply.code(404).send({ error: 'not found' });
+    if (['UPLOADING', 'UPLOAD_COMPLETE', 'UPLOAD_OUTCOME_UNKNOWN'].includes(v.upload_status)) return reply.code(409).send({ error: 'This video is already uploaded or uploading' });
+    const original = db.prepare("SELECT id FROM video_metadata WHERE video_id = ? AND provider = 'manifest' ORDER BY id DESC LIMIT 1").get(id) as { id: number } | undefined;
+    if (!original) return reply.code(404).send({ error: 'There is no original JSON text for this video' });
+    db.transaction(() => {
+      db.prepare('UPDATE video_metadata SET is_current = 0 WHERE video_id = ?').run(id);
+      db.prepare('UPDATE video_metadata SET is_current = 1 WHERE id = ?').run(original.id);
+      db.prepare("UPDATE videos SET enhance_status = 'RESTORED', metadata_status = 'READY', updated_at = datetime('now') WHERE id = ?").run(id);
+    })();
+    logActivity(db, 'video', id, 'restored_original', 'Restored the original text from the clip JSON');
+    return db.prepare('SELECT * FROM video_metadata WHERE video_id = ? AND is_current = 1').get(id);
   });
 
   app.post('/api/videos/approve', async (req, reply) => {

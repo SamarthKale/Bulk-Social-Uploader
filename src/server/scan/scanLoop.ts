@@ -9,6 +9,8 @@ export interface ScanLoopOptions {
   intervalMs: () => number;
   stableMs?: () => number;
   probe?: ScanOptions['probe'];
+  /** Whether imported titles should be improved with Gemini (key, consent and the setting all on). */
+  enhance?: () => Promise<boolean>;
 }
 
 /**
@@ -25,7 +27,7 @@ export function startScanLoop(db: Db, opts: ScanLoopOptions): { runNow(): Promis
       if (stopped) return;
       try {
         await scanFolder(db, f.id, { stableMs: opts.stableMs?.(), probe: opts.probe });
-        await discoverManifests(db, f.id);
+        await discoverManifests(db, f.id, { enhance: (await opts.enhance?.()) ?? false });
       } catch (e) {
         log.error('folder scan failed', { folder: f.path, error: e instanceof Error ? e.message : String(e) });
       }

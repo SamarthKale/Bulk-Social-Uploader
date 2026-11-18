@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { addFolder, listFolders, removeFolder, updateFolder } from '../folders/folderRepo.js';
 import { applyManifest, parseManifest } from '../manifest/manifest.js';
+import { getSettings } from '../settings.js';
 
 const AddBody = z.object({ path: z.string().min(1), recursive: z.boolean().optional() });
 const PatchBody = z
@@ -76,7 +77,13 @@ export function registerFolderRoutes(app: FastifyInstance): void {
       return reply.code(400).send({ error: e instanceof Error ? e.message : 'not a clip manifest' });
     }
     if (!clips.length) return reply.code(400).send({ error: 'The JSON has no clips with a file name and a title' });
-    return applyManifest(db, id, clips);
+    // Improving with Gemini is optional: the import itself always works.
+    const wantsEnhance = (req.query as { enhance?: string }).enhance === '1';
+    const geminiReady = getSettings(db).aiConsent && !!(await app.deps.getProvider());
+    const result = applyManifest(db, id, clips, { enhance: wantsEnhance && geminiReady });
+    return wantsEnhance && !geminiReady
+      ? { ...result, enhanceSkipped: 'Gemini is not set up yet: add your API key and tick the consent box in Settings to improve the text.' }
+      : result;
   });
 
   app.patch('/api/folders/:id', async (req, reply) => {

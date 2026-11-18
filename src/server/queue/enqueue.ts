@@ -28,7 +28,7 @@ export async function enqueueEligible(db: Db, opts: { videoIds?: number[] } = {}
       `SELECT v.id, v.file_path, v.file_size_bytes, v.modified_at, v.content_hash, f.default_visibility
        FROM videos v JOIN folders f ON f.id = v.folder_id
        WHERE v.discovery_status = 'VALID' AND v.metadata_status = 'READY' AND v.upload_status = 'NOT_QUEUED'
-         AND f.is_enabled = 1
+         AND f.is_enabled = 1 AND v.enhance_status NOT IN ('PENDING','RUNNING')
          AND (v.approval_status = 'APPROVED' OR (v.approval_status = 'NOT_REQUIRED' AND f.auto_publish = 1))
          ${filter}
        ORDER BY v.id`,
@@ -56,7 +56,7 @@ export async function enqueueEligible(db: Db, opts: { videoIds?: number[] } = {}
       const still = db
         .prepare(
           `SELECT 1 FROM videos v JOIN folders f ON f.id = v.folder_id
-           WHERE v.id = ? AND v.upload_status = 'NOT_QUEUED' AND v.discovery_status = 'VALID' AND v.metadata_status = 'READY'
+           WHERE v.id = ? AND v.upload_status = 'NOT_QUEUED' AND v.discovery_status = 'VALID' AND v.metadata_status = 'READY' AND v.enhance_status NOT IN ('PENDING','RUNNING')
              AND (v.approval_status = 'APPROVED' OR (v.approval_status = 'NOT_REQUIRED' AND f.auto_publish = 1))`,
         )
         .get(v.id);

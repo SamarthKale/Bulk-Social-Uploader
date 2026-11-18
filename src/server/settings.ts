@@ -14,6 +14,8 @@ export const SettingsSchema = z.object({
   googleClientId: z.string().default(''),
   /** Minutes between automatic folder rescans; 0 = off. */
   scanIntervalMin: z.number().int().min(0).max(1440).default(5),
+  /** Improve titles, descriptions and hashtags imported from a clip JSON with Gemini (needs the key and consent). */
+  enhanceImports: z.boolean().default(true),
   /** Persisted so a pause survives a restart. */
   queuePaused: z.boolean().default(false),
 });

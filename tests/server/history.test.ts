@@ -148,7 +148,7 @@ describe('dashboard', () => {
     const app = buildApp({ db, token: 't' });
     const d = (await app.inject({ method: 'GET', url: '/api/dashboard', headers: H })).json();
     expect(d.counts).toEqual({
-      detected: 0, metadataReady: 0, awaitingApproval: 0, queued: 0, uploading: 0, uploadComplete: 0, published: 0, failed: 0, skipped: 0,
+      detected: 0, enhancing: 0, metadataReady: 0, awaitingApproval: 0, queued: 0, uploading: 0, uploadComplete: 0, published: 0, failed: 0, skipped: 0,
     });
     expect(d.recent).toEqual([]);
     expect(d.channel).toBeNull();

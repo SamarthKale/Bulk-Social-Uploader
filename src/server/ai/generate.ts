@@ -92,7 +92,7 @@ export async function generateMetadata(deps: GenerateDeps, videoId: number, opts
   // Text imported from a clip JSON, or written by the user, is never replaced by an automatic AI run.
   const protectedBy = () =>
     (db.prepare("SELECT provider FROM video_metadata WHERE video_id = ? AND is_current = 1").get(videoId) as { provider: string | null } | undefined)?.provider;
-  const isProtected = () => !explicit && ['manifest', 'user-edit'].includes(protectedBy() ?? '');
+  const isProtected = () => !explicit && ['manifest', 'manifest-ai', 'user-edit'].includes(protectedBy() ?? '');
   if (isProtected()) {
     setStatus('READY');
     return { status: 'ready' };

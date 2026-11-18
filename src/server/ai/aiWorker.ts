@@ -1,6 +1,7 @@
 import type { Db } from '../db/db.js';
 import { log } from '../log.js';
 import { getSettings } from '../settings.js';
+import { enhanceMetadata } from './enhance.js';
 import { generateMetadata } from './generate.js';
 import type { AiProvider } from './provider.js';
 
@@ -16,6 +17,7 @@ export interface AiWorkerDeps {
 /** After a crash, videos mid-analysis are put back in the queue. */
 export function resetStuckAi(db: Db): void {
   db.prepare("UPDATE videos SET metadata_status='NOT_STARTED' WHERE metadata_status IN ('ANALYZING','GENERATING')").run();
+  db.prepare("UPDATE videos SET enhance_status='PENDING' WHERE enhance_status='RUNNING'").run();
 }
 
 /**
@@ -29,15 +31,35 @@ export function startAiWorker(deps: AiWorkerDeps, concurrency: number | (() => n
   resetStuckAi(db);
 
   const claim = db.prepare("UPDATE videos SET metadata_status='ANALYZING' WHERE id = ? AND metadata_status IN ('NOT_STARTED','STALE')");
+  const claimEnhance = db.prepare("UPDATE videos SET enhance_status='RUNNING' WHERE id = ? AND enhance_status='PENDING'");
+  const pendingEnhance = db.prepare("SELECT id FROM videos WHERE enhance_status='PENDING' ORDER BY id LIMIT ?");
   const candidates = db.prepare("SELECT id FROM videos WHERE discovery_status='VALID' AND metadata_status IN ('NOT_STARTED','STALE') ORDER BY id LIMIT ?");
 
   async function tick(): Promise<void> {
     if (stopped) return;
     const max = typeof concurrency === 'function' ? concurrency() : concurrency;
+    const consent = getSettings(db).aiConsent;
+    const provider = consent ? await deps.getProvider() : null;
+    if (!provider) {
+      // Without Gemini nothing can be improved: release the videos so uploads are never held up for it.
+      const released = db.prepare("UPDATE videos SET enhance_status='NONE' WHERE enhance_status='PENDING'").run().changes;
+      if (released) log.warn('Gemini is not set up; skipped improving titles', { videos: released });
+      return;
+    }
+    if (stopped) return;
+    // Improving imported text comes first: it is quick, and uploads wait for it.
+    for (const { id } of pendingEnhance.all(Math.max(0, max - inFlight.size)) as { id: number }[]) {
+      if (claimEnhance.run(id).changes === 0) continue;
+      const job = enhanceMetadata({ db, provider, retryDelayMs: deps.retryDelayMs }, id)
+        .catch((e) => log.error('enhance job crashed', { id, error: String(e) }))
+        .finally(() => {
+          db.prepare("UPDATE videos SET enhance_status='FAILED' WHERE id = ? AND enhance_status='RUNNING'").run(id);
+          inFlight.delete(job);
+        });
+      inFlight.add(job);
+    }
     const free = max - inFlight.size;
-    if (free <= 0 || !getSettings(db).aiConsent) return;
-    const provider = await deps.getProvider();
-    if (!provider || stopped) return;
+    if (free <= 0) return;
     for (const { id } of candidates.all(free) as { id: number }[]) {
       if (claim.run(id).changes === 0) continue;
       const job = generateMetadata(

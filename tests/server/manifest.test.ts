@@ -49,7 +49,8 @@ const vrow = (id: number) => db.prepare('SELECT * FROM videos WHERE id=?').get(i
 describe('parseManifest', () => {
   it('accepts the clipper format and returns the usable fields', () => {
     const clips = parseManifest(manifest(clip('a.mp4')));
-    expect(clips).toEqual([{ file: 'a.mp4', title: 'Title for a.mp4', description: 'Description for a.mp4', hashtags: ['#gta6', '#shorts'] }]);
+    expect(clips).toHaveLength(1);
+    expect(clips[0]).toMatchObject({ file: 'a.mp4', title: 'Title for a.mp4', description: 'Description for a.mp4', hashtags: ['#gta6', '#shorts'] });
   });
 
   it('also accepts title instead of post_title, and a bare array of clips', () => {

@@ -18,7 +18,9 @@ export function registerVideoRoutes(app: FastifyInstance): void {
     const folder = db.prepare('SELECT id FROM folders WHERE id = ? AND is_enabled = 1').get(id);
     if (!folder) return reply.code(404).send({ error: 'folder not found' });
     const scan = await scanFolder(db, id, { stableMs: getSettings(db).stableMs });
-    const metadata = await discoverManifests(db, id); // clips.json next to the videos fills in titles and descriptions
+    const s = getSettings(db);
+    const enhance = s.enhanceImports && s.aiConsent && !!(await app.deps.getProvider());
+    const metadata = await discoverManifests(db, id, { enhance }); // clips.json next to the videos fills in titles and descriptions
     return { ...scan, metadata };
   });
 
@@ -52,6 +54,7 @@ export function registerVideoRoutes(app: FastifyInstance): void {
         `SELECT v.id, v.folder_id, f.display_name AS folder_name, v.filename, v.file_path, v.duration_seconds, v.file_size_bytes, v.width, v.height,
                 v.shorts_warning, v.discovery_status, v.metadata_status, v.approval_status, v.upload_status, v.processing_status,
                 v.youtube_privacy, v.created_at,
+                v.enhance_status, m.provider AS metadata_source,
                 m.title, m.description, m.hashtags_json, m.confidence, m.needs_review, m.ai_profile_id, p.name AS ai_profile,
                 j.youtube_video_id, j.visibility AS requested_visibility,
                 CASE WHEN j.youtube_video_id IS NULL THEN NULL ELSE 'https://youtu.be/' || j.youtube_video_id END AS youtube_url,
