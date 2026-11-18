@@ -72,6 +72,14 @@ test('add a folder, scan it, edit metadata by hand, and never expose the API key
   expect(await page.content()).not.toContain('SECRET-KEY-VALUE-123');
   expect(await page.getByLabel('Gemini API key').inputValue()).toBe('');
 
+  // Refresh and a fresh tab with NO token in the address still show the saved data (session cookie).
+  await page.goto(url.split('#')[0] + '#/library');
+  await expect(page.getByTestId('video-row')).toContainText('Insane 1v4 clutch');
+  const second = await page.context().newPage();
+  await second.goto(url.split('#')[0] + '#/folders');
+  await expect(second.getByTestId('folder-name')).toHaveText(path.basename(videosDir));
+  await second.close();
+
   // The source video was never touched.
   expect(fs.readdirSync(videosDir)).toEqual(['my clip.mp4']);
 });

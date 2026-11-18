@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { buildApp } from './app.js';
@@ -12,9 +13,13 @@ async function main() {
   setLogDir(path.join(dir, 'logs'));
   const db = openDb(path.join(dir, 'localtube.db'));
   const token = crypto.randomBytes(24).toString('hex');
+  // Long-lived browser session secret, kept in the data folder so a restart does not log the browser out.
+  const keyFile = path.join(dir, 'session.key');
+  if (!fs.existsSync(keyFile)) fs.writeFileSync(keyFile, crypto.randomBytes(32).toString('hex'), { mode: 0o600 });
+  const sessionSecret = fs.readFileSync(keyFile, 'utf8').trim();
   // Test hook for the browser smoke test only: a fixed folder instead of the native Windows dialog.
   const testPick = process.env.LOCALTUBE_TEST_PICK_DIR;
-  const app = buildApp({ db, token, ...(testPick ? { pickFolder: async () => testPick } : {}) });
+  const app = buildApp({ db, token, sessionSecret, ...(testPick ? { pickFolder: async () => testPick } : {}) });
 
   const runtime = await startRuntime({
     db,

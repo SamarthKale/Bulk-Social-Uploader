@@ -28,7 +28,7 @@ const routeFromHash = () => {
 export function App() {
   // Reading the API once strips the launch token from the address bar.
   const [route, setRoute] = useState(() => {
-    void api.get('/api/health').catch(() => undefined);
+    void api.post('/api/session/login').catch(() => undefined); // remembers this browser across refreshes and restarts
     return routeFromHash();
   });
   useEffect(() => {

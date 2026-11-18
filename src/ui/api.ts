@@ -22,14 +22,16 @@ export class ApiError extends Error {
 async function request(method: string, url: string, body?: unknown): Promise<Response> {
   const res = await fetch(url, {
     method,
-    headers: { 'x-localtube-token': token(), ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
+    headers: { 'x-localtube-token': token(), 'x-localtube-client': 'ui', ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
-    let msg = `Request failed (${res.status})`;
+    let msg = res.status === 401
+      ? 'Not signed in to LocalTube. Open it with the link printed when the app starts (or run npm start again).'
+      : `Request failed (${res.status})`;
     try {
       const j = (await res.json()) as { error?: string };
-      if (j.error) msg = j.error;
+      if (j.error && res.status !== 401) msg = j.error;
     } catch {
       /* keep default */
     }

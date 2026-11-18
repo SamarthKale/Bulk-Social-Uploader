@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,7 +25,10 @@ import { GOOGLE_ENDPOINTS, type GoogleEndpoints } from './youtube/oauth.js';
 
 export interface AppDeps {
   db: Db;
+  /** Per-launch token printed in the startup link. */
   token: string;
+  /** Persisted secret stored in the browser's session cookie, so refreshes, new tabs and restarts keep working. */
+  sessionSecret: string;
   pickFolder: () => Promise<string | null>;
   secrets: SecretStore;
   getProvider: () => Promise<AiProvider | null>;
@@ -36,10 +40,29 @@ export interface AppDeps {
 
 export type AppInit = Pick<AppDeps, 'db' | 'token'> & Partial<Omit<AppDeps, 'db' | 'token'>>;
 
+const COOKIE = 'lt_session';
+
+/** Constant-time string comparison. */
+function same(a: string | undefined, b: string): boolean {
+  if (typeof a !== 'string') return false;
+  const x = crypto.createHash('sha256').update(a).digest();
+  const y = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(x, y);
+}
+
+function cookieValue(header: string | undefined, name: string): string | undefined {
+  for (const part of (header ?? '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0 && part.slice(0, i).trim() === name) return part.slice(i + 1).trim();
+  }
+  return undefined;
+}
+
 export function buildApp(init: AppInit): FastifyInstance {
   const secrets = init.secrets ?? createSecretStore(path.join(dataDirPath(), 'secrets.json'));
   const oauthEndpoints = init.oauthEndpoints ?? GOOGLE_ENDPOINTS;
   const deps: AppDeps = {
+    sessionSecret: crypto.randomBytes(32).toString('hex'),
     pickFolder: nativePickFolder,
     getProvider: makeProviderGetter(init.db, secrets),
     tempDir: () => getSettings(init.db).tempDir || path.join(os.tmpdir(), 'localtube-work'),
@@ -68,8 +91,11 @@ export function buildApp(init: AppInit): FastifyInstance {
     } catch {
       return reply.code(400).send({ error: 'bad request path' });
     }
-    if (/^\/+api(\/|$)/i.test(pathname) && req.headers['x-localtube-token'] !== deps.token) {
-      return reply.code(401).send({ error: 'unauthorized' });
+    if (/^\/+api(\/|$)/i.test(pathname)) {
+      const byLaunchToken = same(req.headers['x-localtube-token'] as string | undefined, deps.token);
+      // The cookie is SameSite=Strict, and a custom header is required alongside it, so another website cannot ride on it.
+      const byCookie = req.headers['x-localtube-client'] === 'ui' && same(cookieValue(req.headers.cookie, COOKIE), deps.sessionSecret);
+      if (!byLaunchToken && !byCookie) return reply.code(401).send({ error: 'unauthorized' });
     }
   });
   app.addHook('onSend', async (_req, reply) => {
@@ -78,6 +104,11 @@ export function buildApp(init: AppInit): FastifyInstance {
     reply.header('referrer-policy', 'no-referrer');
   });
   app.get('/api/health', async () => ({ ok: true }));
+  // Exchanges a valid credential for the long-lived session cookie.
+  app.post('/api/session/login', async (_req, reply) => {
+    reply.header('set-cookie', `${COOKIE}=${deps.sessionSecret}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000`);
+    return { ok: true };
+  });
   registerFolderRoutes(app);
   registerSettingsRoutes(app);
   registerProfileRoutes(app);
