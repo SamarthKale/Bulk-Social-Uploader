@@ -507,6 +507,22 @@ describe('queue routes', () => {
     expect(jobForVideo(v.id)!.status).toBe('QUEUED');
   });
 
+  it('selecting a video that was imported as "no approval needed" still queues it after auto-publish is turned off', async () => {
+    const v = makeVideo({ approval: 'NOT_REQUIRED', autoPublish: 0 });
+    expect(await enqueueEligible(db)).toBe(0); // auto-publish is off, so it is not queued by itself
+    const app = buildApp({ db, token: 't' });
+    const r = await app.inject({ method: 'POST', url: '/api/queue/enqueue', headers: H, payload: { ids: [v.id] } });
+    expect(r.json()).toEqual({ queued: 1 });
+    expect(jobForVideo(v.id)!.status).toBe('QUEUED');
+  });
+
+  it('enqueue never queues a rejected video even if it is selected', async () => {
+    const v = makeVideo({ approval: 'REJECTED', autoPublish: 0 });
+    const app = buildApp({ db, token: 't' });
+    const r = await app.inject({ method: 'POST', url: '/api/queue/enqueue', headers: H, payload: { ids: [v.id] } });
+    expect(r.json()).toEqual({ queued: 0 });
+  });
+
   it('resolve endpoint validates the YouTube id', async () => {
     const v = makeVideo();
     await enqueueEligible(db);

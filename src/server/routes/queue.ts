@@ -43,7 +43,7 @@ export function registerQueueRoutes(app: FastifyInstance): void {
   app.post('/api/queue/enqueue', async (req, reply) => {
     const b = IdsBody.safeParse(req.body);
     if (!b.success) return reply.code(400).send({ error: 'invalid body' });
-    const approve = db.prepare("UPDATE videos SET approval_status = 'APPROVED', updated_at = datetime('now') WHERE id = ? AND metadata_status = 'READY' AND approval_status = 'PENDING'");
+    const approve = db.prepare("UPDATE videos SET approval_status = 'APPROVED', updated_at = datetime('now') WHERE id = ? AND metadata_status = 'READY' AND approval_status IN ('PENDING','NOT_REQUIRED')");
     db.transaction(() => { for (const id of b.data.ids) approve.run(id); })();
     return { queued: await enqueueEligible(db, { videoIds: b.data.ids }) };
   });

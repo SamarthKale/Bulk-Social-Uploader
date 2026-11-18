@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { Db } from './db/db.js';
 
 /** Default Gemini model; confirm availability and limits during Phase 0. */
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
 
 export const SettingsSchema = z.object({
   aiConsent: z.boolean().default(false),
