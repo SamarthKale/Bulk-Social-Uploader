@@ -87,6 +87,15 @@ export async function generateMetadata(deps: GenerateDeps, videoId: number, opts
     return { status: 'failed', error: message };
   };
 
+  // Text imported from a clip JSON, or written by the user, is never replaced by an automatic AI run.
+  const protectedBy = () =>
+    (db.prepare("SELECT provider FROM video_metadata WHERE video_id = ? AND is_current = 1").get(videoId) as { provider: string | null } | undefined)?.provider;
+  const isProtected = () => !explicit && ['manifest', 'user-edit'].includes(protectedBy() ?? '');
+  if (isProtected()) {
+    setStatus('READY');
+    return { status: 'ready' };
+  }
+
   const folder = db.prepare('SELECT * FROM folders WHERE id = ?').get(video.folder_id) as Folder;
   const profile = folder.ai_profile_id ? getProfile(db, folder.ai_profile_id) : undefined;
   if (!profile) return fail('The folder has no AI profile assigned');
@@ -162,6 +171,7 @@ export async function generateMetadata(deps: GenerateDeps, videoId: number, opts
       hashtags: opts.only && opts.only !== 'hashtags' && cur ? (JSON.parse(cur.hashtags_json) as string[]) : value.hashtags,
     };
 
+    if (isProtected()) return { status: 'ready' }; // a clip JSON was imported while the AI was working
     const flags = reviewReasons(merged);
     const needsReview = value.needsReview || flags.length > 0;
     db.transaction(() => {

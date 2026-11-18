@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api, errorText } from '../api';
 import type { Folder, Profile } from '../types';
 import { Button, Card, StatusBadge, Toggle, inputCls, fmtDate } from './ui';
+import { ImportJsonButton } from './ImportJson';
 
 export function FolderCard({ folder, profiles, onChange, onError }: { folder: Folder; profiles: Profile[]; onChange: () => void; onError: (m: string) => void }) {
   const [busy, setBusy] = useState(false);
@@ -19,8 +20,8 @@ export function FolderCard({ folder, profiles, onChange, onError }: { folder: Fo
     setBusy(true);
     setResult('');
     try {
-      const r = await api.post<{ found: number; added: number; changed: number; waiting: number; unavailable: number }>(`/api/folders/${folder.id}/scan`);
-      setResult(`Found ${r.found}, new ${r.added}, changed ${r.changed}, still copying ${r.waiting}, unavailable ${r.unavailable}`);
+      const r = await api.post<{ found: number; added: number; changed: number; waiting: number; unavailable: number; metadata?: { applied: number; files: string[] } }>(`/api/folders/${folder.id}/scan`);
+      setResult(`Found ${r.found}, new ${r.added}, changed ${r.changed}, still copying ${r.waiting}, unavailable ${r.unavailable}` + (r.metadata?.files.length ? `. Read ${r.metadata.files.join(', ')}: ${r.metadata.applied} updated` : ''));
       onChange();
     } catch (e) {
       onError(errorText(e));
@@ -70,10 +71,12 @@ export function FolderCard({ folder, profiles, onChange, onError }: { folder: Fo
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Button onClick={scan} disabled={busy}>{busy ? 'Scanning...' : 'Scan now'}</Button>
+        <ImportJsonButton folderId={folder.id} onDone={(m) => { setResult(m); onChange(); }} onError={onError} />
         <Button variant="danger" onClick={remove}>Remove from LocalTube</Button>
         <span className="text-xs text-zinc-500">Last scan: {folder.last_scan_at ? fmtDate(folder.last_scan_at) : 'never'}</span>
         {result && <span className="text-xs text-zinc-600 dark:text-zinc-400" data-testid="scan-result">{result}</span>}
       </div>
+      <p className="text-xs text-zinc-500">A clip JSON (like clips.json) inside this folder is read automatically on every scan: its titles, descriptions and hashtags are used instead of the AI. You can also pick one by hand with "Import metadata JSON".</p>
     </Card>
   );
 }

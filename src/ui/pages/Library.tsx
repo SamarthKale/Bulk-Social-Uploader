@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, errorText } from '../api';
 import { MetadataEditor } from '../components/MetadataEditor';
+import { ImportJsonButton } from '../components/ImportJson';
 import { Button, ErrorBanner, PageHeader, StatusBadge, fmtDuration, fmtSize, inputCls, usePoll } from '../components/ui';
 import type { Folder, VideoRow } from '../types';
 
@@ -50,6 +51,8 @@ export function Library() {
     });
   }, [list.data, f.text, sort]);
 
+  // The folder a JSON import applies to: the one chosen in the filter, or the only folder there is.
+  const importFolder = f.folderId ? Number(f.folderId) : folders.data?.length === 1 ? folders.data[0].id : null;
   const ids = [...selected];
   const toggle = (id: number) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const allVisible = rows.slice(0, shown).map((r) => r.id);
@@ -66,7 +69,10 @@ export function Library() {
 
   return (
     <div>
-      <PageHeader title="Video Library" />
+      <PageHeader title="Video Library">
+        <ImportJsonButton folderId={importFolder} onDone={(m) => { setNote(m); list.reload(); }} onError={setError} />
+      </PageHeader>
+      {importFolder === null && folders.data && folders.data.length > 1 && <p className="mb-2 text-xs text-zinc-500">To import a metadata JSON here, first choose a folder in the folder filter.</p>}
       <ErrorBanner error={error ?? list.error} />
       <div className="mb-3 flex flex-wrap items-end gap-2">
         <input className={`${inputCls} max-w-56`} placeholder="Search filename or title" aria-label="Search" value={f.text} onChange={(e) => setF({ ...f, text: e.target.value })} />

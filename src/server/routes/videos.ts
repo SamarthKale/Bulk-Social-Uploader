@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { extractFrames } from '../media/frames.js';
 import { allowRepublish } from '../scan/duplicates.js';
 import { scanFolder } from '../scan/scanner.js';
+import { discoverManifests } from '../manifest/manifest.js';
 import { getSettings } from '../settings.js';
 
 const LATEST_JOB = '(SELECT id FROM upload_jobs j WHERE j.video_id = v.id ORDER BY j.id DESC LIMIT 1)';
@@ -16,7 +17,9 @@ export function registerVideoRoutes(app: FastifyInstance): void {
     const id = idOf(req);
     const folder = db.prepare('SELECT id FROM folders WHERE id = ? AND is_enabled = 1').get(id);
     if (!folder) return reply.code(404).send({ error: 'folder not found' });
-    return scanFolder(db, id, { stableMs: getSettings(db).stableMs });
+    const scan = await scanFolder(db, id, { stableMs: getSettings(db).stableMs });
+    const metadata = await discoverManifests(db, id); // clips.json next to the videos fills in titles and descriptions
+    return { ...scan, metadata };
   });
 
   app.get('/api/videos', async (req) => {
