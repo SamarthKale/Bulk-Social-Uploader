@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
+import { ensureDefaultProfile } from '../ai/profileRepo.js';
 
 export type Db = Database.Database;
 
@@ -22,5 +23,6 @@ export function openDb(file: string): Db {
       db.pragma(`user_version = ${m.version}`);
     })();
   }
+  ensureDefaultProfile(db);
   return db;
 }

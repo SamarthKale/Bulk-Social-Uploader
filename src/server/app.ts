@@ -6,6 +6,7 @@ import { pickFolder as nativePickFolder } from './folders/nativeDialog.js';
 import { createSecretStore, type SecretStore } from './secrets/secretStore.js';
 import { registerFolderRoutes } from './routes/folders.js';
 import { registerSettingsRoutes } from './routes/settings.js';
+import { registerProfileRoutes } from './routes/profiles.js';
 
 export interface AppDeps {
   db: Db;
@@ -32,6 +33,7 @@ export function buildApp(init: AppInit): FastifyInstance {
   app.get('/api/health', async () => ({ ok: true }));
   registerFolderRoutes(app);
   registerSettingsRoutes(app);
+  registerProfileRoutes(app);
   return app;
 }
 
