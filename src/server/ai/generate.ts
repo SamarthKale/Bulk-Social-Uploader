@@ -19,6 +19,8 @@ export interface GenerateDeps {
   provider: AiProvider;
   tempDir: string;
   frameCount?: number;
+  /** Frame extractor; tests replace it to inject events at exact moments. */
+  extract?: typeof extractFrames;
   /** Base delay between retries of transient provider errors. Tests set 0. */
   retryDelayMs?: number;
 }
@@ -135,7 +137,12 @@ export async function generateMetadata(deps: GenerateDeps, videoId: number, opts
 
     fs.mkdirSync(deps.tempDir, { recursive: true });
     jobDir = fs.mkdtempSync(path.join(deps.tempDir, 'job-'));
-    const framePaths = await extractFrames(video.file_path, video.duration_seconds ?? 1, deps.frameCount ?? 6, jobDir);
+    const framePaths = await (deps.extract ?? extractFrames)(video.file_path, video.duration_seconds ?? 1, deps.frameCount ?? 6, jobDir);
+    // A clip JSON (or the user) may have supplied the text while frames were being extracted: stop, do not ask the AI.
+    if (isProtected()) {
+      setStatus('READY');
+      return { status: 'ready' };
+    }
     const frames = framePaths.map((f) => fs.readFileSync(f));
     setStatus('GENERATING');
 
@@ -171,7 +178,10 @@ export async function generateMetadata(deps: GenerateDeps, videoId: number, opts
       hashtags: opts.only && opts.only !== 'hashtags' && cur ? (JSON.parse(cur.hashtags_json) as string[]) : value.hashtags,
     };
 
-    if (isProtected()) return { status: 'ready' }; // a clip JSON was imported while the AI was working
+    if (isProtected()) {
+      setStatus('READY'); // a clip JSON was imported while the AI was working: keep it, and never leave the video mid-generation
+      return { status: 'ready' };
+    }
     const flags = reviewReasons(merged);
     const needsReview = value.needsReview || flags.length > 0;
     db.transaction(() => {

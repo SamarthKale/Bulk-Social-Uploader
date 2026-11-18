@@ -9,8 +9,9 @@ import { parseManifest, applyManifest, discoverManifests } from '../../src/serve
 import { enqueueEligible } from '../../src/server/queue/enqueue.js';
 import { scanFolder } from '../../src/server/scan/scanner.js';
 import { generateMetadata } from '../../src/server/ai/generate.js';
+import { extractFrames } from '../../src/server/media/frames.js';
 import { setSettings } from '../../src/server/settings.js';
-import { FakeProvider } from '../fixtures/fakeProvider.js';
+import { FakeProvider, validOutput } from '../fixtures/fakeProvider.js';
 import { fixture, tempDir } from '../fixtures/make-fixtures.js';
 
 const H = { 'x-localtube-token': 't' };
@@ -259,14 +260,41 @@ describe('manifest and AI together', () => {
     await scanFolder(db, folder.id, { stableMs: 30 });
     setSettings(db, { aiConsent: true });
     const id = (db.prepare('SELECT id FROM videos').get() as { id: number }).id;
-    const provider = new FakeProvider({ delayMs: 250 });
-    const running = generateMetadata({ db, provider, tempDir: tempDir('lt-w-'), retryDelayMs: 0, frameCount: 2 }, id);
-    await new Promise((r) => setTimeout(r, 100)); // the AI call is in flight
-    applyManifest(db, folder.id, parseManifest(manifest(clip('a.mp4', { post_title: 'From the JSON' }))));
-    await running;
+    // The JSON is imported exactly while the AI call is in flight (deterministic, no timing).
+    const provider = new FakeProvider({
+      respond: (n) => {
+        applyManifest(db, folder.id, parseManifest(manifest(clip('a.mp4', { post_title: 'From the JSON' }))));
+        return validOutput(n);
+      },
+    });
+    await generateMetadata({ db, provider, tempDir: tempDir('lt-w-'), retryDelayMs: 0, frameCount: 2 }, id);
     expect(cur(id)!.title).toBe('From the JSON');
     expect(cur(id)!.provider).toBe('manifest');
     expect(vrow(id).metadata_status).toBe('READY');
+  });
+
+  it('a JSON imported while frames are still being extracted leaves the video READY, not stuck in GENERATING', async () => {
+    const dir = tempDir('lt-mf-ai3-');
+    fs.copyFileSync(fixture('short'), path.join(dir, 'a.mp4'));
+    const folder = addFolder(db, { path: dir });
+    await scanFolder(db, folder.id, { stableMs: 30 });
+    setSettings(db, { aiConsent: true });
+    const id = (db.prepare('SELECT id FROM videos').get() as { id: number }).id;
+    const provider = new FakeProvider();
+    await generateMetadata(
+      {
+        db, provider, tempDir: tempDir('lt-w-'), retryDelayMs: 0, frameCount: 2,
+        extract: async (...args) => {
+          const out = await extractFrames(...args);
+          applyManifest(db, folder.id, parseManifest(manifest(clip('a.mp4', { post_title: 'From the JSON' })))); // lands before the AI call starts
+          return out;
+        },
+      },
+      id,
+    );
+    expect(vrow(id).metadata_status).toBe('READY');
+    expect(cur(id)!.title).toBe('From the JSON');
+    expect(provider.calls).toBe(0); // no point asking the AI once the JSON has supplied the text
   });
 
   it('the AI worker does not regenerate a video that already has manifest metadata', async () => {
