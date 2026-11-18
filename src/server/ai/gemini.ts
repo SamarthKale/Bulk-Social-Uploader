@@ -2,10 +2,30 @@ import { AiError, type AiInput, type AiProvider } from './provider.js';
 
 const DEFAULT_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
+interface ErrorDetail {
+  '@type'?: string;
+  retryDelay?: string;
+  violations?: { quotaId?: string }[];
+}
+
 interface GeminiResponse {
   candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[];
   promptFeedback?: { blockReason?: string };
-  error?: { message?: string };
+  error?: { message?: string; details?: ErrorDetail[] };
+}
+
+/** Reads the quota scope (per minute or per day) and the suggested wait from Google's error details. */
+function quotaInfo(details: ErrorDetail[] | undefined): { quotaScope?: 'minute' | 'day'; retryAfterMs?: number } {
+  const out: { quotaScope?: 'minute' | 'day'; retryAfterMs?: number } = {};
+  for (const d of details ?? []) {
+    for (const v of d.violations ?? []) {
+      if (/PerDay/i.test(v.quotaId ?? '')) out.quotaScope = 'day';
+      else if (/PerMinute/i.test(v.quotaId ?? '') && out.quotaScope !== 'day') out.quotaScope = 'minute';
+    }
+    const m = d.retryDelay?.match(/^([\d.]+)s$/);
+    if (m) out.retryAfterMs = Math.round(parseFloat(m[1]) * 1000);
+  }
+  return out;
 }
 
 export class GeminiProvider implements AiProvider {
@@ -56,13 +76,17 @@ export class GeminiProvider implements AiProvider {
     const text = await res.text();
     if (!res.ok) {
       let detail = text;
+      let info: { quotaScope?: 'minute' | 'day'; retryAfterMs?: number } = {};
       try {
-        detail = (JSON.parse(text) as GeminiResponse).error?.message ?? text;
+        const err = (JSON.parse(text) as GeminiResponse).error;
+        detail = err?.message ?? text;
+        if (res.status === 429) info = quotaInfo(err?.details);
       } catch {
         /* keep raw text */
       }
-      const retryable = res.status === 408 || res.status === 429 || res.status >= 500;
-      throw new AiError(`Gemini returned ${res.status}: ${this.scrub(detail)}`, retryable, res.status);
+      // A per-day quota will not clear by retrying today.
+      const retryable = (res.status === 408 || res.status === 429 || res.status >= 500) && info.quotaScope !== 'day';
+      throw new AiError(`Gemini returned ${res.status}: ${this.scrub(detail)}`, retryable, res.status, info);
     }
 
     let json: GeminiResponse;

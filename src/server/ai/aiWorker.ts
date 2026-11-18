@@ -1,4 +1,5 @@
 import type { Db } from '../db/db.js';
+import { logActivity } from '../activity.js';
 import { log } from '../log.js';
 import { getSettings } from '../settings.js';
 import { enhanceMetadata } from './enhance.js';
@@ -28,6 +29,8 @@ export function startAiWorker(deps: AiWorkerDeps, concurrency: number | (() => n
   const { db } = deps;
   const inFlight = new Set<Promise<unknown>>();
   let stopped = false;
+  /** After a daily-quota error: no more calls to that model until it should have reset. */
+  let quotaBlock: { model: string; until: number } | null = null;
   resetStuckAi(db);
 
   const claim = db.prepare("UPDATE videos SET metadata_status='ANALYZING' WHERE id = ? AND metadata_status IN ('NOT_STARTED','STALE')");
@@ -47,10 +50,19 @@ export function startAiWorker(deps: AiWorkerDeps, concurrency: number | (() => n
       return;
     }
     if (stopped) return;
+    // While a model's daily quota is used up, release waiting videos instead of calling it: uploads keep the original text.
+    if (quotaBlock && (quotaBlock.model !== provider.model || Date.now() >= quotaBlock.until)) quotaBlock = null;
+    if (quotaBlock) db.prepare("UPDATE videos SET enhance_status='FAILED' WHERE enhance_status='PENDING'").run();
     // Improving imported text comes first: it is quick, and uploads wait for it.
-    for (const { id } of pendingEnhance.all(Math.max(0, max - inFlight.size)) as { id: number }[]) {
+    for (const { id } of quotaBlock ? [] : (pendingEnhance.all(Math.max(0, max - inFlight.size)) as { id: number }[])) {
       if (claimEnhance.run(id).changes === 0) continue;
       const job = enhanceMetadata({ db, provider, retryDelayMs: deps.retryDelayMs }, id)
+        .then((r) => {
+          if (!r.stopAll) return;
+          quotaBlock = { model: provider.model, until: Date.now() + Math.min(r.retryAfterMs ?? 3_600_000, 24 * 3_600_000) };
+          const released = db.prepare("UPDATE videos SET enhance_status='FAILED' WHERE enhance_status='PENDING'").run().changes;
+          if (released) logActivity(db, 'system', null, 'enhance_quota', `${r.error} ${released} video(s) keep their original text for now.`);
+        })
         .catch((e) => log.error('enhance job crashed', { id, error: String(e) }))
         .finally(() => {
           db.prepare("UPDATE videos SET enhance_status='FAILED' WHERE id = ? AND enhance_status='RUNNING'").run(id);

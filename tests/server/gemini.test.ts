@@ -79,6 +79,42 @@ describe('GeminiProvider', () => {
     }
   });
 
+  it('a per-day quota 429 is not retryable, and carries the quota scope and reset time', async () => {
+    const { baseUrl } = await fake((_s, res) => {
+      res.statusCode = 429;
+      res.end(JSON.stringify({ error: { code: 429, message: 'You exceeded your current quota', details: [
+        { '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }] },
+        { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '34544s' },
+      ] } }));
+    });
+    const err = await failure(new GeminiProvider('KEY-123456789', 'm', { baseUrl }).generate(input));
+    expect(err.status).toBe(429);
+    expect(err.retryable).toBe(false);
+    expect(err.quotaScope).toBe('day');
+    expect(err.retryAfterMs).toBe(34544000);
+  });
+
+  it('a per-minute quota 429 stays retryable and carries the suggested delay', async () => {
+    const { baseUrl } = await fake((_s, res) => {
+      res.statusCode = 429;
+      res.end(JSON.stringify({ error: { code: 429, message: 'slow down', details: [
+        { '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaId: 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier' }] },
+        { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '12.5s' },
+      ] } }));
+    });
+    const err = await failure(new GeminiProvider('KEY-123456789', 'm', { baseUrl }).generate(input));
+    expect(err.retryable).toBe(true);
+    expect(err.quotaScope).toBe('minute');
+    expect(err.retryAfterMs).toBe(12500);
+  });
+
+  it('a plain 429 without details is still retryable', async () => {
+    const { baseUrl } = await fake((_s, res) => { res.statusCode = 429; res.end('{"error":{"message":"busy"}}'); });
+    const err = await failure(new GeminiProvider('KEY-123456789', 'm', { baseUrl }).generate(input));
+    expect(err.retryable).toBe(true);
+    expect(err.quotaScope).toBeUndefined();
+  });
+
   it('401 and 400 are not retryable and never echo the API key', async () => {
     for (const status of [400, 401, 403]) {
       const { baseUrl } = await fake((_s, res) => {

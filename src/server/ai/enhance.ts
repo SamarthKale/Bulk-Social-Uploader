@@ -19,6 +19,10 @@ export interface EnhanceDeps {
 export interface EnhanceResult {
   status: 'done' | 'failed' | 'skipped';
   error?: string;
+  /** The provider's daily quota is used up: trying other videos today is pointless. */
+  stopAll?: boolean;
+  /** How long until that quota is expected to reset. */
+  retryAfterMs?: number;
 }
 
 export interface EnhanceBase {
@@ -151,8 +155,16 @@ export async function enhanceMetadata(deps: EnhanceDeps, videoId: number, opts: 
       try {
         raw = await provider.generate({ systemPrompt, userText, frames: [] });
       } catch (e) {
+        if (e instanceof AiError && e.quotaScope === 'day') {
+          const hours = e.retryAfterMs ? Math.max(1, Math.round(e.retryAfterMs / 3_600_000)) : null;
+          setEnh('FAILED');
+          const msg = `Gemini's daily free quota for this model is used up${hours ? ` (it resets in about ${hours} hour${hours === 1 ? '' : 's'})` : ''}. Choose another model in Settings, or use "Improve with Gemini" later.`;
+          logActivity(db, 'video', videoId, 'enhance_failed', `Kept the original text: ${msg}`);
+          return { status: 'failed', error: msg, stopAll: true, retryAfterMs: e.retryAfterMs };
+        }
         if (e instanceof AiError && e.retryable && attempt < 2) {
-          await sleep((deps.retryDelayMs ?? 2000) * (attempt + 1));
+          const base = (deps.retryDelayMs ?? 2000) * (attempt + 1);
+          await sleep(e.retryAfterMs ? Math.max(base, Math.min(e.retryAfterMs, 60_000)) : base); // wait as long as the provider asks, up to a minute
           continue;
         }
         throw e;

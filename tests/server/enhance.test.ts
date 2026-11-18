@@ -243,6 +243,29 @@ describe('enhanceMetadata', () => {
     expect(cur(f2.ids['b.mp4'])!.provider).toBe('manifest');
   });
 
+  it('a daily quota error stops at once with a clear message and tells the worker to stop', async () => {
+    const { id } = await imported();
+    const p = new FakeProvider({ respond: () => { throw new AiError('You exceeded your current quota', false, 429, { quotaScope: 'day', retryAfterMs: 9 * 3600_000 }); } });
+    const r = await enhanceMetadata(deps(p), id);
+    expect(r.status).toBe('failed');
+    expect(r.stopAll).toBe(true);
+    expect(p.calls).toBe(1);
+    expect(r.error).toMatch(/daily/i);
+    expect(r.error).toMatch(/9 h|9 hours|about 9/i);
+    expect(cur(id)!.provider).toBe('manifest'); // original kept
+    expect(vrow(id).enhance_status).toBe('FAILED');
+  });
+
+  it('a per-minute quota error waits for the delay Google suggests, then succeeds', async () => {
+    const { id } = await imported();
+    let n = 0;
+    const p = new FakeProvider({ respond: () => { if (++n === 1) throw new AiError('slow down', true, 429, { quotaScope: 'minute', retryAfterMs: 30 }); return improved(); } });
+    const t0 = Date.now();
+    const r = await enhanceMetadata({ db, provider: p, retryDelayMs: 5 }, id);
+    expect(r.status).toBe('done');
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(25);
+  });
+
   it('never touches a title the user edited by hand, and never changes an uploaded video', async () => {
     const { id, folder } = await imported();
     db.prepare("UPDATE video_metadata SET provider='user-edit' WHERE video_id=?").run(id);
@@ -330,6 +353,22 @@ describe('the AI worker enhances in the background', () => {
     while (Date.now() - t0 < 10000 && vrow(ids['a.mp4']).enhance_status !== 'DONE') await new Promise((r) => setTimeout(r, 20));
     await w.stop();
     expect(vrow(ids['a.mp4']).enhance_status).toBe('DONE');
+  });
+
+  it('stops calling Gemini after a daily quota error and releases everything still waiting, so uploads are not held', async () => {
+    const files = ['a.mp4', 'b.mp4', 'c.mp4', 'd.mp4', 'e.mp4'];
+    const { folder, ids } = folderWith(files);
+    applyManifest(db, folder.id, parseManifest(manifest(...files.map((f) => clip(f)))), { enhance: true });
+    enableAi();
+    const p = new FakeProvider({ respond: () => { throw new AiError('You exceeded your current quota', false, 429, { quotaScope: 'day', retryAfterMs: 3600_000 }); } });
+    const w = startAiWorker({ db, getProvider: async () => p, tempDir: () => tempDir('lt-w-'), pollMs: 10, retryDelayMs: 0 }, 2);
+    const t0 = Date.now();
+    while (Date.now() - t0 < 10000 && (db.prepare("SELECT COUNT(*) c FROM videos WHERE enhance_status IN ('PENDING','RUNNING')").get() as any).c > 0) await new Promise((r) => setTimeout(r, 20));
+    await w.stop();
+    expect(p.calls).toBeLessThanOrEqual(2); // only the calls already in flight
+    for (const f of files) expect(vrow(ids[f]).enhance_status).toBe('FAILED');
+    for (const f of files) expect(cur(ids[f])!.provider).toBe('manifest');
+    expect((db.prepare("SELECT COUNT(*) c FROM activity_log WHERE event_type='enhance_quota'").get() as any).c).toBe(1);
   });
 
   it('releases PENDING videos when AI is switched off, so uploads are not held forever', async () => {

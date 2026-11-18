@@ -31,8 +31,10 @@ export function registerSettingsRoutes(app: FastifyInstance): void {
       return { ok: true, model: provider.model, ms: Date.now() - t0 };
     } catch (e) {
       const status = e instanceof AiError ? e.status : undefined;
+      const day = e instanceof AiError && e.quotaScope === 'day';
+      const hours = e instanceof AiError && e.retryAfterMs ? Math.max(1, Math.round(e.retryAfterMs / 3_600_000)) : null;
       const hint =
-        status === 429 ? 'This model has no free quota left for your key right now. Pick another model below (for example gemini-3-flash-preview or gemini-flash-lite-latest), or wait and try again.'
+        status === 429 ? (day ? `This model's daily free quota is used up${hours ? ` (resets in about ${hours} h)` : ''}. Pick another model below, for example gemini-flash-lite-latest, or try again later.` : 'This model is rate limited right now. Wait a minute and try again, or pick another model below.')
         : status === 404 ? 'Google no longer offers this model to your key. Choose another model.'
         : status === 401 || status === 403 ? 'Google rejected the API key. Check it in Google AI Studio and save it again.'
         : status === 503 ? 'The model is overloaded at the moment. Try again shortly, or choose another model.'

@@ -44,7 +44,7 @@ export function SettingsPage() {
         <Field label="Model" hint="Which Gemini model writes titles and descriptions. If you get quota or 'no longer available' errors, pick another one from the list and press Test Gemini.">
           <input className={inputCls} list="gemini-models" value={form.geminiModel} onChange={(e) => setForm({ ...form, geminiModel: e.target.value })} />
           <datalist id="gemini-models">
-            {['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-3-flash-preview', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'].map((m) => <option key={m} value={m} />)}
+            {['gemini-flash-lite-latest', 'gemini-flash-latest', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3-flash-preview'].map((m) => <option key={m} value={m} />)}
           </datalist>
         </Field>
         <div className="flex flex-wrap items-center gap-2">

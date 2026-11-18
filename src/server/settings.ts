@@ -2,7 +2,8 @@ import { z } from 'zod';
 import type { Db } from './db/db.js';
 
 /** Default Gemini model; confirm availability and limits during Phase 0. */
-export const DEFAULT_GEMINI_MODEL = 'gemini-flash-latest';
+/** A "-latest" alias keeps working when Google retires a named model; the lite model has the most free quota. */
+export const DEFAULT_GEMINI_MODEL = 'gemini-flash-lite-latest';
 
 export const SettingsSchema = z.object({
   aiConsent: z.boolean().default(false),
