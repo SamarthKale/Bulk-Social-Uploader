@@ -5,6 +5,7 @@ import { buildApp } from './app.js';
 import { openDb } from './db/db.js';
 import { dataDir, PORT } from './config.js';
 import { log, setLogDir } from './log.js';
+import { startRuntime } from './runtime.js';
 
 async function main() {
   const dir = dataDir();
@@ -12,6 +13,14 @@ async function main() {
   const db = openDb(path.join(dir, 'localtube.db'));
   const token = crypto.randomBytes(24).toString('hex');
   const app = buildApp({ db, token });
+
+  const runtime = await startRuntime({
+    db,
+    auth: app.deps.auth,
+    getProvider: app.deps.getProvider,
+    tempDir: app.deps.tempDir,
+  });
+
   await app.listen({ host: '127.0.0.1', port: PORT });
   const url = `http://127.0.0.1:${PORT}/#token=${token}`;
   log.info('server started', { port: PORT });
@@ -19,6 +28,20 @@ async function main() {
   if (process.platform === 'win32' && !process.env.LOCALTUBE_NO_OPEN) {
     spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore' }).unref();
   }
+
+  // Graceful shutdown: stop taking work, pause the active upload with its session saved, flush the DB.
+  let closing = false;
+  const shutdown = async (signal: string) => {
+    if (closing) return;
+    closing = true;
+    log.info('shutting down', { signal });
+    await runtime.stop();
+    await app.close();
+    db.close();
+    process.exit(0);
+  };
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
 }
 
 main().catch((e) => {

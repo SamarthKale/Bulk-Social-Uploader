@@ -12,6 +12,8 @@ export const SettingsSchema = z.object({
   stableMs: z.number().int().min(100).max(600_000).default(2000),
   geminiModel: z.string().min(1).default(DEFAULT_GEMINI_MODEL),
   googleClientId: z.string().default(''),
+  /** Minutes between automatic folder rescans; 0 = off. */
+  scanIntervalMin: z.number().int().min(0).max(1440).default(5),
   /** Persisted so a pause survives a restart. */
   queuePaused: z.boolean().default(false),
 });
