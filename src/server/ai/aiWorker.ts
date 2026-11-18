@@ -12,6 +12,8 @@ export interface AiWorkerDeps {
   tempDir: () => string;
   pollMs?: number;
   retryDelayMs?: number;
+  /** Minimum time between two Gemini enhancement requests (keeps free-tier rate limits from being hit). Default 4 s. */
+  enhanceGapMs?: number;
   frameCount?: number;
 }
 
@@ -31,6 +33,7 @@ export function startAiWorker(deps: AiWorkerDeps, concurrency: number | (() => n
   let stopped = false;
   /** After a daily-quota error: no more calls to that model until it should have reset. */
   let quotaBlock: { model: string; until: number } | null = null;
+  let lastEnhanceStart = 0;
   resetStuckAi(db);
 
   const claim = db.prepare("UPDATE videos SET metadata_status='ANALYZING' WHERE id = ? AND metadata_status IN ('NOT_STARTED','STALE')");
@@ -54,8 +57,11 @@ export function startAiWorker(deps: AiWorkerDeps, concurrency: number | (() => n
     if (quotaBlock && (quotaBlock.model !== provider.model || Date.now() >= quotaBlock.until)) quotaBlock = null;
     if (quotaBlock) db.prepare("UPDATE videos SET enhance_status='FAILED' WHERE enhance_status='PENDING'").run();
     // Improving imported text comes first: it is quick, and uploads wait for it.
+    const gap = deps.enhanceGapMs ?? 4000;
     for (const { id } of quotaBlock ? [] : (pendingEnhance.all(Math.max(0, max - inFlight.size)) as { id: number }[])) {
+      if (Date.now() - lastEnhanceStart < gap) break; // pace the requests
       if (claimEnhance.run(id).changes === 0) continue;
+      lastEnhanceStart = Date.now();
       const job = enhanceMetadata({ db, provider, retryDelayMs: deps.retryDelayMs }, id)
         .then((r) => {
           if (!r.stopAll) return;

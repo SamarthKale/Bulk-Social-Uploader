@@ -113,9 +113,9 @@ export function Library() {
               <th className="p-2"><input type="checkbox" aria-label="Select all" checked={allVisible.length > 0 && allVisible.every((i) => selected.has(i))} onChange={(e) => setSelected(e.target.checked ? new Set(allVisible) : new Set())} /></th>
               <th className="p-2" />
               <th className="p-2">{header('filename', 'Filename')}</th>
-              <th className="p-2">Folder</th>
+              <th className="hidden p-2 2xl:table-cell">Folder</th>
               <th className="p-2">{header('duration_seconds', 'Duration')}</th>
-              <th className="p-2">{header('file_size_bytes', 'Size')}</th>
+              <th className="hidden p-2 xl:table-cell">{header('file_size_bytes', 'Size')}</th>
               <th className="p-2">Title</th>
               <th className="p-2">AI</th>
               <th className="p-2">Approval</th>
@@ -129,9 +129,9 @@ export function Library() {
                 <td className="p-2"><input type="checkbox" aria-label={`Select ${v.filename}`} checked={selected.has(v.id)} onChange={() => toggle(v.id)} /></td>
                 <td className="p-2"><Thumb id={v.id} /></td>
                 <td className="p-2"><button className="block max-w-[14rem] truncate text-left font-medium text-indigo-600 hover:underline" title={v.filename} onClick={() => setEditing(v.id)}>{v.filename}</button>{v.discovery_status !== 'VALID' && <div><StatusBadge status={v.discovery_status} /></div>}</td>
-                <td className="p-2">{v.folder_name}</td>
+                <td className="hidden p-2 2xl:table-cell">{v.folder_name}</td>
                 <td className="p-2">{fmtDuration(v.duration_seconds)}</td>
-                <td className="p-2">{fmtSize(v.file_size_bytes)}</td>
+                <td className="hidden p-2 xl:table-cell">{fmtSize(v.file_size_bytes)}</td>
                 <td className="max-w-72 p-2"><div className="truncate" title={v.title ?? ''}>{v.title ?? <span className="text-zinc-400">none yet</span>}</div><div className="mt-1"><SourceChip source={v.metadata_source} enhance={v.enhance_status} /></div></td>
                 <td className="p-2"><StatusBadge status={v.metadata_status} /></td>
                 <td className="p-2"><StatusBadge status={v.approval_status} /></td>

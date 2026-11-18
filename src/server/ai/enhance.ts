@@ -150,7 +150,7 @@ export async function enhanceMetadata(deps: EnhanceDeps, videoId: number, opts: 
   let value: Metadata | undefined;
   let lastErrors = '';
   try {
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 5; attempt++) {
       let raw: unknown;
       try {
         raw = await provider.generate({ systemPrompt, userText, frames: [] });
@@ -162,9 +162,11 @@ export async function enhanceMetadata(deps: EnhanceDeps, videoId: number, opts: 
           logActivity(db, 'video', videoId, 'enhance_failed', `Kept the original text: ${msg}`);
           return { status: 'failed', error: msg, stopAll: true, retryAfterMs: e.retryAfterMs };
         }
-        if (e instanceof AiError && e.retryable && attempt < 2) {
-          const base = (deps.retryDelayMs ?? 2000) * (attempt + 1);
-          await sleep(e.retryAfterMs ? Math.max(base, Math.min(e.retryAfterMs, 60_000)) : base); // wait as long as the provider asks, up to a minute
+        // A rate limit (429) clears with time, so it gets more patience than other temporary errors.
+        const maxAttempts = e instanceof AiError && e.status === 429 ? 5 : 3;
+        if (e instanceof AiError && e.retryable && attempt < maxAttempts - 1) {
+          const base = (deps.retryDelayMs ?? 2000) * (e.status === 429 ? 8 : 1) * (attempt + 1);
+          await sleep(e.retryAfterMs ? Math.max(base, Math.min(e.retryAfterMs, 60_000)) : Math.min(base, 60_000)); // wait as long as the provider asks, up to a minute
           continue;
         }
         throw e;

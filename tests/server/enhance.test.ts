@@ -266,6 +266,31 @@ describe('enhanceMetadata', () => {
     expect(Date.now() - t0).toBeGreaterThanOrEqual(25);
   });
 
+  it('keeps retrying a rate-limit (429) patiently, up to five attempts, before giving up', async () => {
+    const { id } = await imported();
+    let n = 0;
+    const p = new FakeProvider({ respond: () => { if (++n < 5) throw new AiError('slow down', true, 429); return improved(); } });
+    const r = await enhanceMetadata(deps(p), id);
+    expect(r.status).toBe('done');
+    expect(p.calls).toBe(5);
+  });
+
+  it('gives up after five rate-limit attempts and keeps the original', async () => {
+    const { id } = await imported();
+    const p = new FakeProvider({ respond: () => { throw new AiError('slow down', true, 429); } });
+    const r = await enhanceMetadata(deps(p), id);
+    expect(r.status).toBe('failed');
+    expect(p.calls).toBe(5);
+    expect(cur(id)!.provider).toBe('manifest');
+  });
+
+  it('other transient errors still give up after three attempts', async () => {
+    const { id } = await imported();
+    const p = new FakeProvider({ respond: () => { throw new AiError('overloaded', true, 503); } });
+    expect((await enhanceMetadata(deps(p), id)).status).toBe('failed');
+    expect(p.calls).toBe(3);
+  });
+
   it('never touches a title the user edited by hand, and never changes an uploaded video', async () => {
     const { id, folder } = await imported();
     db.prepare("UPDATE video_metadata SET provider='user-edit' WHERE video_id=?").run(id);
@@ -333,7 +358,7 @@ describe('the AI worker enhances in the background', () => {
     applyManifest(db, folder.id, parseManifest(manifest(...files.map((f) => clip(f)))), { enhance: true });
     enableAi();
     const p = new FakeProvider({ delayMs: 60, respond: () => improved() });
-    const w = startAiWorker({ db, getProvider: async () => p, tempDir: () => tempDir('lt-w-'), pollMs: 10, retryDelayMs: 0 }, 2);
+    const w = startAiWorker({ db, getProvider: async () => p, tempDir: () => tempDir('lt-w-'), pollMs: 10, retryDelayMs: 0, enhanceGapMs: 0 }, 2);
     const t0 = Date.now();
     while (Date.now() - t0 < 15000 && (db.prepare("SELECT COUNT(*) c FROM videos WHERE enhance_status='DONE'").get() as any).c < 4) await new Promise((r) => setTimeout(r, 20));
     await w.stop();
@@ -348,11 +373,27 @@ describe('the AI worker enhances in the background', () => {
     db.prepare("UPDATE videos SET enhance_status='RUNNING'").run();
     enableAi();
     const p = new FakeProvider({ respond: () => improved() });
-    const w = startAiWorker({ db, getProvider: async () => p, tempDir: () => tempDir('lt-w-'), pollMs: 10, retryDelayMs: 0 }, 2);
+    const w = startAiWorker({ db, getProvider: async () => p, tempDir: () => tempDir('lt-w-'), pollMs: 10, retryDelayMs: 0, enhanceGapMs: 0 }, 2);
     const t0 = Date.now();
     while (Date.now() - t0 < 10000 && vrow(ids['a.mp4']).enhance_status !== 'DONE') await new Promise((r) => setTimeout(r, 20));
     await w.stop();
     expect(vrow(ids['a.mp4']).enhance_status).toBe('DONE');
+  });
+
+  it('paces requests so a free-tier rate limit is not exceeded', async () => {
+    const files = ['a.mp4', 'b.mp4', 'c.mp4'];
+    const { folder } = folderWith(files);
+    applyManifest(db, folder.id, parseManifest(manifest(...files.map((f) => clip(f)))), { enhance: true });
+    enableAi();
+    const starts: number[] = [];
+    const p = new FakeProvider({ respond: () => { starts.push(Date.now()); return improved(); } });
+    const w = startAiWorker({ db, getProvider: async () => p, tempDir: () => tempDir('lt-w-'), pollMs: 10, retryDelayMs: 0, enhanceGapMs: 120 }, 2);
+    const t0 = Date.now();
+    while (Date.now() - t0 < 10000 && starts.length < 3) await new Promise((r) => setTimeout(r, 20));
+    await w.stop();
+    expect(starts).toHaveLength(3);
+    expect(starts[1] - starts[0]).toBeGreaterThanOrEqual(100);
+    expect(starts[2] - starts[1]).toBeGreaterThanOrEqual(100);
   });
 
   it('stops calling Gemini after a daily quota error and releases everything still waiting, so uploads are not held', async () => {
@@ -361,7 +402,7 @@ describe('the AI worker enhances in the background', () => {
     applyManifest(db, folder.id, parseManifest(manifest(...files.map((f) => clip(f)))), { enhance: true });
     enableAi();
     const p = new FakeProvider({ respond: () => { throw new AiError('You exceeded your current quota', false, 429, { quotaScope: 'day', retryAfterMs: 3600_000 }); } });
-    const w = startAiWorker({ db, getProvider: async () => p, tempDir: () => tempDir('lt-w-'), pollMs: 10, retryDelayMs: 0 }, 2);
+    const w = startAiWorker({ db, getProvider: async () => p, tempDir: () => tempDir('lt-w-'), pollMs: 10, retryDelayMs: 0, enhanceGapMs: 0 }, 2);
     const t0 = Date.now();
     while (Date.now() - t0 < 10000 && (db.prepare("SELECT COUNT(*) c FROM videos WHERE enhance_status IN ('PENDING','RUNNING')").get() as any).c > 0) await new Promise((r) => setTimeout(r, 20));
     await w.stop();
