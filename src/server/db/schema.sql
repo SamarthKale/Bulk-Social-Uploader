@@ -48,6 +48,7 @@ CREATE TABLE videos (
   video_codec TEXT,
   audio_codec TEXT,
   shorts_warning TEXT,
+  allow_republish INTEGER NOT NULL DEFAULT 0,
   discovery_status TEXT NOT NULL DEFAULT 'DISCOVERED',
   metadata_status TEXT NOT NULL DEFAULT 'NOT_STARTED',
   approval_status TEXT NOT NULL DEFAULT 'PENDING',
